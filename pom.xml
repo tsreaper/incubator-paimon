@@ -927,6 +927,7 @@ under the License.
         </pluginManagement>
     </build>
 
+    <!--
     <repositories>
         <repository>
             <id>apache-releases</id>
@@ -939,4 +940,5 @@ under the License.
             <url>https://repository.apache.org/content/repositories/snapshots/</url>
         </repository>
     </repositories>
+    -->
 </project>
