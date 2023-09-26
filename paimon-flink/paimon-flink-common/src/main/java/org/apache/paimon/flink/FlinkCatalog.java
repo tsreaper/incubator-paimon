@@ -18,15 +18,23 @@
 
 package org.apache.paimon.flink;
 
+import org.apache.paimon.Snapshot;
 import org.apache.paimon.catalog.Catalog;
 import org.apache.paimon.catalog.Identifier;
+import org.apache.paimon.data.BinaryRow;
 import org.apache.paimon.flink.procedure.ProcedureUtil;
+import org.apache.paimon.flink.utils.StatsUtils;
+import org.apache.paimon.format.FileFormat;
+import org.apache.paimon.manifest.ManifestList;
 import org.apache.paimon.options.Options;
 import org.apache.paimon.schema.Schema;
 import org.apache.paimon.schema.SchemaChange;
 import org.apache.paimon.schema.SchemaManager;
 import org.apache.paimon.table.FileStoreTable;
 import org.apache.paimon.table.Table;
+import org.apache.paimon.table.source.DataSplit;
+import org.apache.paimon.utils.FileStorePathFactory;
+import org.apache.paimon.utils.StringMapToBinaryRowConverter;
 import org.apache.paimon.utils.StringUtils;
 
 import org.apache.flink.table.api.TableColumn;
@@ -216,17 +224,20 @@ public class FlinkCatalog extends AbstractCatalog {
     @Override
     public CatalogTable getTable(ObjectPath tablePath)
             throws TableNotExistException, CatalogException {
-        Table table;
-        try {
-            table = catalog.getTable(toIdentifier(tablePath));
-        } catch (Catalog.TableNotExistException e) {
-            throw new TableNotExistException(getName(), tablePath);
-        }
-
+        Table table = getPaimonTable(tablePath);
         if (table instanceof FileStoreTable) {
             return toCatalogTable(table);
         } else {
             return new SystemCatalogTable(table);
+        }
+    }
+
+    private Table getPaimonTable(ObjectPath tablePath)
+            throws TableNotExistException, CatalogException {
+        try {
+            return catalog.getTable(toIdentifier(tablePath));
+        } catch (Catalog.TableNotExistException e) {
+            throw new TableNotExistException(getName(), tablePath);
         }
     }
 
@@ -816,26 +827,168 @@ public class FlinkCatalog extends AbstractCatalog {
 
     @Override
     public final CatalogTableStatistics getTableStatistics(ObjectPath tablePath)
-            throws CatalogException {
-        return CatalogTableStatistics.UNKNOWN;
+            throws TableNotExistException, CatalogException {
+        Table table = getPaimonTable(tablePath);
+        if (table instanceof FileStoreTable) {
+            return getTableStatistics((FileStoreTable) table);
+        } else {
+            return CatalogTableStatistics.UNKNOWN;
+        }
+    }
+
+    private CatalogTableStatistics getTableStatistics(FileStoreTable table) {
+        Snapshot snapshot = table.snapshotManager().latestSnapshot();
+        if (snapshot == null) {
+            return new CatalogTableStatistics(0, 0, 0, 0);
+        } else {
+            FileStorePathFactory fileStorePathFactory = new FileStorePathFactory(table.location());
+            FileFormat fileFormat = table.coreOptions().manifestFormat();
+            ManifestList manifestList =
+                    new ManifestList.Factory(table.fileIO(), fileFormat, fileStorePathFactory, null)
+                            .create();
+            return new CatalogTableStatistics(
+                    Optional.ofNullable(snapshot.totalRecordCount()).orElse(-1L),
+                    (int) snapshot.totalFileCount(manifestList),
+                    -1,
+                    -1);
+        }
     }
 
     @Override
     public final CatalogColumnStatistics getTableColumnStatistics(ObjectPath tablePath)
-            throws CatalogException {
-        return CatalogColumnStatistics.UNKNOWN;
+            throws TableNotExistException, CatalogException {
+        Table table = getPaimonTable(tablePath);
+        if (table instanceof FileStoreTable) {
+            return getTableColumnStatistics((FileStoreTable) table);
+        } else {
+            return CatalogColumnStatistics.UNKNOWN;
+        }
+    }
+
+    private CatalogColumnStatistics getTableColumnStatistics(FileStoreTable table) {
+        org.apache.paimon.types.RowType rowType = table.schema().logicalRowType();
+        List<DataSplit> splits = table.newSnapshotReader().read().dataSplits();
+        return StatsUtils.toFlinkStats(
+                rowType, splits.stream().flatMap(s -> s.dataFiles().stream())::iterator);
     }
 
     @Override
     public final CatalogTableStatistics getPartitionStatistics(
-            ObjectPath tablePath, CatalogPartitionSpec partitionSpec) throws CatalogException {
-        return CatalogTableStatistics.UNKNOWN;
+            ObjectPath tablePath, CatalogPartitionSpec partitionSpec)
+            throws PartitionNotExistException, CatalogException {
+        return bulkGetPartitionStatistics(tablePath, Collections.singletonList(partitionSpec))
+                .get(0);
     }
 
     @Override
     public final CatalogColumnStatistics getPartitionColumnStatistics(
-            ObjectPath tablePath, CatalogPartitionSpec partitionSpec) throws CatalogException {
-        return CatalogColumnStatistics.UNKNOWN;
+            ObjectPath tablePath, CatalogPartitionSpec partitionSpec)
+            throws PartitionNotExistException, CatalogException {
+        return bulkGetPartitionColumnStatistics(tablePath, Collections.singletonList(partitionSpec))
+                .get(0);
+    }
+
+    @Override
+    public List<CatalogTableStatistics> bulkGetPartitionStatistics(
+            ObjectPath tablePath, List<CatalogPartitionSpec> partitionSpecs)
+            throws PartitionNotExistException, CatalogException {
+        Table table;
+        try {
+            table = getPaimonTable(tablePath);
+        } catch (TableNotExistException e) {
+            throw new CatalogException(e);
+        }
+
+        if (table instanceof FileStoreTable) {
+            return bulkGetPartitionStatistics(tablePath, (FileStoreTable) table, partitionSpecs);
+        } else {
+            return partitionSpecs.stream()
+                    .map(p -> CatalogTableStatistics.UNKNOWN)
+                    .collect(Collectors.toList());
+        }
+    }
+
+    private List<CatalogTableStatistics> bulkGetPartitionStatistics(
+            ObjectPath tablePath, FileStoreTable table, List<CatalogPartitionSpec> partitionSpecs)
+            throws PartitionNotExistException {
+        List<BinaryRow> partitions = toPaimonPartitions(table, partitionSpecs);
+        Map<BinaryRow, List<DataSplit>> partitionSplits =
+                table.newSnapshotReader().withPartitionFilter(partitions).read().dataSplits()
+                        .stream()
+                        .collect(Collectors.groupingBy(DataSplit::partition));
+
+        List<CatalogTableStatistics> stats = new ArrayList<>();
+        for (int i = 0; i < partitionSpecs.size(); i++) {
+            BinaryRow partition = partitions.get(i);
+            if (partitionSplits.containsKey(partition)) {
+                List<DataSplit> splits = partitionSplits.get(partition);
+                stats.add(
+                        new CatalogTableStatistics(
+                                splits.stream().mapToLong(DataSplit::rowCount).sum(),
+                                splits.size(),
+                                -1,
+                                -1));
+            } else {
+                throw new PartitionNotExistException(name, tablePath, partitionSpecs.get(i));
+            }
+        }
+        return stats;
+    }
+
+    @Override
+    public List<CatalogColumnStatistics> bulkGetPartitionColumnStatistics(
+            ObjectPath tablePath, List<CatalogPartitionSpec> partitionSpecs)
+            throws PartitionNotExistException, CatalogException {
+        Table table;
+        try {
+            table = getPaimonTable(tablePath);
+        } catch (TableNotExistException e) {
+            throw new CatalogException(e);
+        }
+
+        if (table instanceof FileStoreTable) {
+            return bulkGetPartitionColumnStatistics(
+                    tablePath, (FileStoreTable) table, partitionSpecs);
+        } else {
+            return partitionSpecs.stream()
+                    .map(p -> CatalogColumnStatistics.UNKNOWN)
+                    .collect(Collectors.toList());
+        }
+    }
+
+    private List<CatalogColumnStatistics> bulkGetPartitionColumnStatistics(
+            ObjectPath tablePath, FileStoreTable table, List<CatalogPartitionSpec> partitionSpecs)
+            throws PartitionNotExistException {
+        List<BinaryRow> partitions = toPaimonPartitions(table, partitionSpecs);
+        Map<BinaryRow, List<DataSplit>> partitionSplits =
+                table.newSnapshotReader().withPartitionFilter(partitions).read().dataSplits()
+                        .stream()
+                        .collect(Collectors.groupingBy(DataSplit::partition));
+
+        org.apache.paimon.types.RowType rowType = table.schema().logicalRowType();
+        List<CatalogColumnStatistics> stats = new ArrayList<>();
+        for (int i = 0; i < partitionSpecs.size(); i++) {
+            BinaryRow partition = partitions.get(i);
+            if (partitionSplits.containsKey(partition)) {
+                List<DataSplit> splits = partitionSplits.get(partition);
+                stats.add(
+                        StatsUtils.toFlinkStats(
+                                rowType,
+                                splits.stream().flatMap(s -> s.dataFiles().stream())::iterator));
+            } else {
+                throw new PartitionNotExistException(name, tablePath, partitionSpecs.get(i));
+            }
+        }
+        return stats;
+    }
+
+    private List<BinaryRow> toPaimonPartitions(
+            FileStoreTable table, List<CatalogPartitionSpec> partitionSpecs) {
+        org.apache.paimon.types.RowType partitionType = table.schema().logicalPartitionType();
+        StringMapToBinaryRowConverter converter = new StringMapToBinaryRowConverter(partitionType);
+        return partitionSpecs.stream()
+                .map(p -> converter.convert(p.getPartitionSpec()))
+                .collect(Collectors.toList());
     }
 
     @Override

@@ -404,6 +404,12 @@ public class Snapshot {
                 .sum();
     }
 
+    public long totalFileCount(ManifestList manifestList) {
+        return allManifests(manifestList).stream()
+                .mapToLong(m -> m.numAddedFiles() - m.numDeletedFiles())
+                .sum();
+    }
+
     public String toJson() {
         return JsonSerdeUtil.toJson(this);
     }

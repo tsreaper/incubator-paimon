@@ -27,7 +27,7 @@ public class FieldStats {
 
     @Nullable private final Object minValue;
     @Nullable private final Object maxValue;
-    private final Long nullCount;
+    @Nullable private final Long nullCount;
 
     public FieldStats(
             @Nullable Object minValue, @Nullable Object maxValue, @Nullable Long nullCount) {

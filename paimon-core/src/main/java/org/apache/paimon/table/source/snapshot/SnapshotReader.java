@@ -57,6 +57,8 @@ public interface SnapshotReader {
 
     SnapshotReader withBucketFilter(Filter<Integer> bucketFilter);
 
+    SnapshotReader withPartitionFilter(List<BinaryRow> partitions);
+
     /** Get splits plan from snapshot. */
     Plan read();
 

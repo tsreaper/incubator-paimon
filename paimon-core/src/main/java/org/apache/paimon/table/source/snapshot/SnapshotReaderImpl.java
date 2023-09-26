@@ -173,6 +173,12 @@ public class SnapshotReaderImpl implements SnapshotReader {
         return this;
     }
 
+    @Override
+    public SnapshotReader withPartitionFilter(List<BinaryRow> partitions) {
+        scan.withPartitionFilter(partitions);
+        return this;
+    }
+
     /** Get splits from {@link FileKind#ADD} files. */
     @Override
     public Plan read() {
