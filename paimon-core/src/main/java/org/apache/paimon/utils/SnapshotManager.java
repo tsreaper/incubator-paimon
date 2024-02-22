@@ -79,6 +79,7 @@ public class SnapshotManager implements Serializable {
     }
 
     public Path snapshotPath(long snapshotId) {
+        Preconditions.checkArgument(snapshotId >= 0);
         return new Path(tablePath + "/snapshot/" + SNAPSHOT_PREFIX + snapshotId);
     }
 
@@ -87,6 +88,7 @@ public class SnapshotManager implements Serializable {
     }
 
     public Path branchSnapshotPath(String branchName, long snapshotId) {
+        Preconditions.checkArgument(snapshotId >= 0);
         return new Path(
                 getBranchPath(tablePath, branchName) + "/snapshot/" + SNAPSHOT_PREFIX + snapshotId);
     }
@@ -108,11 +110,13 @@ public class SnapshotManager implements Serializable {
     }
 
     public Snapshot snapshot(String branchName, long snapshotId) {
+        Preconditions.checkArgument(snapshotId >= 0);
         Path snapshotPath = snapshotPathByBranch(branchName, snapshotId);
         return Snapshot.fromPath(fileIO, snapshotPath);
     }
 
     public boolean snapshotExists(long snapshotId) {
+        Preconditions.checkArgument(snapshotId >= 0);
         Path path = snapshotPath(snapshotId);
         try {
             return fileIO.exists(path);
@@ -475,6 +479,7 @@ public class SnapshotManager implements Serializable {
 
     private void commitHint(long snapshotId, String fileName, String branchName)
             throws IOException {
+        Preconditions.checkArgument(snapshotId >= 0);
         Path snapshotDir = snapshotDirByBranch(branchName);
         Path hintFile = new Path(snapshotDir, fileName);
         fileIO.overwriteFileUtf8(hintFile, String.valueOf(snapshotId));
