@@ -38,7 +38,9 @@ import org.apache.paimon.schema.SchemaManager;
 import org.apache.paimon.schema.TableSchema;
 import org.apache.paimon.table.TableType;
 import org.apache.paimon.types.DataField;
+import org.apache.paimon.types.DataType;
 import org.apache.paimon.types.DataTypes;
+import org.apache.paimon.types.RowType;
 
 import org.apache.flink.table.hive.LegacyHiveClasses;
 import org.apache.hadoop.conf.Configuration;
@@ -158,13 +160,35 @@ public class HiveCatalog extends AbstractCatalog {
     @Override
     public Optional<MetastoreClient.Factory> metastoreClientFactory(Identifier identifier) {
         try {
+            TableSchema tableSchema = getDataTableSchema(identifier);
             return Optional.of(
                     new HiveMetastoreClient.Factory(
-                            identifier, getDataTableSchema(identifier), hiveConf, clientClassName));
+                            identifier,
+                            tableSchema.options(),
+                            tableSchema.logicalPartitionType(),
+                            hiveConf,
+                            clientClassName));
         } catch (TableNotExistException e) {
             throw new RuntimeException(
                     "Table " + identifier + " does not exist. This is unexpected.", e);
         }
+    }
+
+    @Override
+    public Optional<MetastoreClient.Factory> metastoreClientFactory(
+            Identifier identifier, Schema schema) {
+        DataType[] partitionTypes =
+                schema.partitionKeys().stream()
+                        .map(p -> schema.rowType().getField(p).type())
+                        .toArray(DataType[]::new);
+        String[] partitionKeys = schema.partitionKeys().toArray(new String[0]);
+        return Optional.of(
+                new HiveMetastoreClient.Factory(
+                        identifier,
+                        schema.options(),
+                        RowType.of(partitionTypes, partitionKeys),
+                        hiveConf,
+                        clientClassName));
     }
 
     @Override

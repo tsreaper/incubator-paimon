@@ -22,7 +22,7 @@ import org.apache.paimon.CoreOptions;
 import org.apache.paimon.catalog.Identifier;
 import org.apache.paimon.data.BinaryRow;
 import org.apache.paimon.metastore.MetastoreClient;
-import org.apache.paimon.schema.TableSchema;
+import org.apache.paimon.types.RowType;
 import org.apache.paimon.utils.PartitionPathUtils;
 import org.apache.paimon.utils.RowDataPartitionComputer;
 
@@ -35,6 +35,7 @@ import org.apache.hadoop.hive.metastore.api.StorageDescriptor;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /** {@link MetastoreClient} for Hive tables. */
 public class HiveMetastoreClient implements MetastoreClient {
@@ -45,14 +46,18 @@ public class HiveMetastoreClient implements MetastoreClient {
     private final IMetaStoreClient client;
     private final StorageDescriptor sd;
 
-    private HiveMetastoreClient(Identifier identifier, TableSchema schema, IMetaStoreClient client)
+    private HiveMetastoreClient(
+            Identifier identifier,
+            Map<String, String> tableOptions,
+            RowType partitionType,
+            IMetaStoreClient client)
             throws Exception {
         this.identifier = identifier;
         this.partitionComputer =
                 new RowDataPartitionComputer(
-                        new CoreOptions(schema.options()).partitionDefaultName(),
-                        schema.logicalPartitionType(),
-                        schema.partitionKeys().toArray(new String[0]));
+                        new CoreOptions(tableOptions).partitionDefaultName(),
+                        partitionType,
+                        partitionType.getFieldNames().toArray(new String[0]));
 
         this.client = client;
         this.sd = client.getTable(identifier.getDatabaseName(), identifier.getObjectName()).getSd();
@@ -116,17 +121,20 @@ public class HiveMetastoreClient implements MetastoreClient {
         private static final long serialVersionUID = 1L;
 
         private final Identifier identifier;
-        private final TableSchema schema;
+        private final Map<String, String> tableOptions;
+        private final RowType partitionType;
         private final SerializableHiveConf hiveConf;
         private final String clientClassName;
 
         public Factory(
                 Identifier identifier,
-                TableSchema schema,
+                Map<String, String> tableOptions,
+                RowType partitionType,
                 HiveConf hiveConf,
                 String clientClassName) {
             this.identifier = identifier;
-            this.schema = schema;
+            this.tableOptions = tableOptions;
+            this.partitionType = partitionType;
             this.hiveConf = new SerializableHiveConf(hiveConf);
             this.clientClassName = clientClassName;
         }
@@ -136,7 +144,10 @@ public class HiveMetastoreClient implements MetastoreClient {
             HiveConf conf = hiveConf.conf();
             try {
                 return new HiveMetastoreClient(
-                        identifier, schema, HiveCatalog.createClient(conf, clientClassName));
+                        identifier,
+                        tableOptions,
+                        partitionType,
+                        HiveCatalog.createClient(conf, clientClassName));
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }

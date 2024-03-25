@@ -61,6 +61,11 @@ public interface Catalog extends AutoCloseable {
         return Optional.empty();
     }
 
+    default Optional<MetastoreClient.Factory> metastoreClientFactory(
+            Identifier identifier, Schema schema) {
+        return metastoreClientFactory(identifier);
+    }
+
     /**
      * Get the names of all databases in this catalog.
      *
