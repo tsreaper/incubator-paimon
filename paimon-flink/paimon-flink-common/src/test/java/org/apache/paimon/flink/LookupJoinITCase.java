@@ -51,10 +51,10 @@ public class LookupJoinITCase extends CatalogITCaseBase {
     private void initTable(LookupCacheMode cacheMode) {
         String dim =
                 "CREATE TABLE DIM (i INT PRIMARY KEY NOT ENFORCED, j INT, k1 INT, k2 INT) WITH"
-                        + " ('continuous.discovery-interval'='1 ms' %s)";
+                        + " ('continuous.discovery-interval'='1s' %s)";
         String partitioned =
                 "CREATE TABLE PARTITIONED_DIM (i INT, j INT, k1 INT, k2 INT, PRIMARY KEY (i, j) NOT ENFORCED)"
-                        + "PARTITIONED BY (`i`) WITH ('continuous.discovery-interval'='1 ms' %s)";
+                        + "PARTITIONED BY (`i`) WITH ('continuous.discovery-interval'='1s' %s)";
 
         String fullOption = ", 'lookup.cache' = 'full'";
 

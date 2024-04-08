@@ -20,6 +20,7 @@ package org.apache.paimon.flink.lookup;
 
 import org.apache.paimon.CoreOptions;
 import org.apache.paimon.data.InternalRow;
+import org.apache.paimon.flink.Magic;
 import org.apache.paimon.io.SplitsParallelReadUtil;
 import org.apache.paimon.mergetree.compact.ConcatRecordReader;
 import org.apache.paimon.options.ConfigOption;
@@ -29,11 +30,13 @@ import org.apache.paimon.reader.RecordReader;
 import org.apache.paimon.schema.TableSchema;
 import org.apache.paimon.table.FileStoreTable;
 import org.apache.paimon.table.Table;
+import org.apache.paimon.table.source.DataSplit;
 import org.apache.paimon.table.source.ReadBuilder;
 import org.apache.paimon.table.source.Split;
 import org.apache.paimon.table.source.StreamTableScan;
 import org.apache.paimon.types.RowType;
 import org.apache.paimon.utils.FunctionWithIOException;
+import org.apache.paimon.utils.SnapshotManager;
 import org.apache.paimon.utils.TypeUtils;
 
 import org.apache.paimon.shade.guava30.com.google.common.primitives.Ints;
@@ -46,6 +49,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.IntUnaryOperator;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import static org.apache.paimon.flink.FlinkConnectorOptions.LOOKUP_BOOTSTRAP_PARALLELISM;
@@ -119,6 +123,30 @@ public class LookupStreamingReader {
         CoreOptions options = CoreOptions.fromMap(table.options());
         FunctionWithIOException<Split, RecordReader<InternalRow>> readerSupplier =
                 split -> readBuilder.newRead().createReader(split);
+
+        if (Magic.M.get()) {
+            String str =
+                    splits.stream()
+                            .map(
+                                    s -> {
+                                        if (s instanceof DataSplit) {
+                                            return String.valueOf(((DataSplit) s).snapshotId());
+                                        } else {
+                                            return s.toString();
+                                        }
+                                    })
+                            .collect(Collectors.joining(", "));
+            SnapshotManager manager = ((FileStoreTable) table).snapshotManager();
+            if (manager.latestSnapshotId() != null) {
+                for (long i = manager.earliestSnapshotId(); i <= manager.latestSnapshotId(); i++) {
+                    System.out.println(
+                            System.currentTimeMillis()
+                                    + " snapshot "
+                                    + manager.snapshot(i).toJson());
+                }
+            }
+            System.out.println(System.currentTimeMillis() + " ok this is next batch: " + str);
+        }
 
         RowType readType = TypeUtils.project(table.rowType(), projection);
 

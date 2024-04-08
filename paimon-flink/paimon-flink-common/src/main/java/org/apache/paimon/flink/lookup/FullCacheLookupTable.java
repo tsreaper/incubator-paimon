@@ -150,6 +150,9 @@ public abstract class FullCacheLookupTable implements LookupTable {
 
     @Override
     public void refresh() throws Exception {
+        if (Magic.M.get()) {
+            System.out.println(System.currentTimeMillis() + " hello this is refresh~~~~~~~~");
+        }
         while (true) {
             try (RecordReaderIterator<InternalRow> batch =
                     new RecordReaderIterator<>(reader.nextBatch(false))) {
