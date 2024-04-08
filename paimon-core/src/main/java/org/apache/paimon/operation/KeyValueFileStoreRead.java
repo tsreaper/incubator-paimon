@@ -21,6 +21,7 @@ package org.apache.paimon.operation;
 import org.apache.paimon.CoreOptions;
 import org.apache.paimon.KeyValue;
 import org.apache.paimon.KeyValueFileStore;
+import org.apache.paimon.Magic;
 import org.apache.paimon.data.BinaryRow;
 import org.apache.paimon.data.InternalRow;
 import org.apache.paimon.deletionvectors.DeletionVector;
@@ -214,6 +215,10 @@ public class KeyValueFileStoreRead implements FileStoreRead<KeyValue> {
             throws IOException {
         if (split.beforeFiles().isEmpty()) {
             if (split.isStreaming() || split.convertToRawFiles().isPresent()) {
+                if (Magic.M.get()) {
+                    System.out.println(
+                            System.currentTimeMillis() + " data files " + split.dataFiles());
+                }
                 return noMergeRead(
                         split.partition(),
                         split.bucket(),

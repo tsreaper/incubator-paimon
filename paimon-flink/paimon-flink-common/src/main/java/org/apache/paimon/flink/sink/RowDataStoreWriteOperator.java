@@ -18,8 +18,8 @@
 
 package org.apache.paimon.flink.sink;
 
+import org.apache.paimon.Magic;
 import org.apache.paimon.data.InternalRow;
-import org.apache.paimon.flink.Magic;
 import org.apache.paimon.flink.log.LogWriteCallback;
 import org.apache.paimon.table.FileStoreTable;
 import org.apache.paimon.table.sink.SinkRecord;

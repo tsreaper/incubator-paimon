@@ -18,9 +18,9 @@
 
 package org.apache.paimon.flink.lookup;
 
+import org.apache.paimon.Magic;
 import org.apache.paimon.data.InternalRow;
 import org.apache.paimon.data.serializer.InternalSerializers;
-import org.apache.paimon.flink.Magic;
 import org.apache.paimon.lookup.BulkLoader;
 import org.apache.paimon.lookup.RocksDBValueState;
 import org.apache.paimon.predicate.Predicate;

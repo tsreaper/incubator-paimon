@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package org.apache.paimon.flink;
+package org.apache.paimon;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 

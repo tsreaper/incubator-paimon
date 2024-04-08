@@ -19,8 +19,8 @@
 package org.apache.paimon.flink.lookup;
 
 import org.apache.paimon.CoreOptions;
+import org.apache.paimon.Magic;
 import org.apache.paimon.data.InternalRow;
-import org.apache.paimon.flink.Magic;
 import org.apache.paimon.io.SplitsParallelReadUtil;
 import org.apache.paimon.mergetree.compact.ConcatRecordReader;
 import org.apache.paimon.options.ConfigOption;
@@ -165,6 +165,14 @@ public class LookupStreamingReader {
                 readers.add(() -> readerSupplier.apply(split));
             }
             reader = ConcatRecordReader.create(readers);
+            if (Magic.M.get()) {
+                System.out.println(
+                        System.currentTimeMillis()
+                                + " num readers: "
+                                + readers.size()
+                                + " projected predicate "
+                                + projectedPredicate);
+            }
         }
 
         if (projectedPredicate != null) {

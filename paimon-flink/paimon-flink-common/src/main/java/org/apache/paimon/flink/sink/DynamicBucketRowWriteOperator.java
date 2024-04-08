@@ -18,8 +18,8 @@
 
 package org.apache.paimon.flink.sink;
 
+import org.apache.paimon.Magic;
 import org.apache.paimon.data.InternalRow;
-import org.apache.paimon.flink.Magic;
 import org.apache.paimon.table.FileStoreTable;
 
 import org.apache.flink.api.java.tuple.Tuple2;
