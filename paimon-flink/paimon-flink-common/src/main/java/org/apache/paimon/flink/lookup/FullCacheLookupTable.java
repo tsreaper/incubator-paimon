@@ -23,6 +23,7 @@ import org.apache.paimon.data.BinaryRow;
 import org.apache.paimon.data.GenericRow;
 import org.apache.paimon.data.InternalRow;
 import org.apache.paimon.disk.IOManager;
+import org.apache.paimon.flink.Magic;
 import org.apache.paimon.lookup.BulkLoader;
 import org.apache.paimon.lookup.RocksDBState;
 import org.apache.paimon.lookup.RocksDBStateFactory;
@@ -119,6 +120,10 @@ public abstract class FullCacheLookupTable implements LookupTable {
                 new RecordReaderIterator<>(reader.nextBatch(true))) {
             while (batch.hasNext()) {
                 InternalRow row = batch.next();
+                if (Magic.M.get()) {
+                    System.out.println(
+                            System.currentTimeMillis() + " start dim row! " + row.getInt(0));
+                }
                 if (predicate == null || predicate.test(row)) {
                     bulkLoadSorter.write(GenericRow.of(toKeyBytes(row), toValueBytes(row)));
                 }

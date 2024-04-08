@@ -20,6 +20,7 @@ package org.apache.paimon.flink.lookup;
 
 import org.apache.paimon.data.InternalRow;
 import org.apache.paimon.data.serializer.InternalSerializers;
+import org.apache.paimon.flink.Magic;
 import org.apache.paimon.lookup.BulkLoader;
 import org.apache.paimon.lookup.RocksDBValueState;
 import org.apache.paimon.predicate.Predicate;
@@ -99,6 +100,9 @@ public class PrimaryKeyLookupTable extends FullCacheLookupTable {
         Predicate predicate = projectedPredicate();
         while (incremental.hasNext()) {
             InternalRow row = incremental.next();
+            if (Magic.M.get()) {
+                System.out.println(System.currentTimeMillis() + " get dim row! " + row.getInt(0));
+            }
             primaryKeyRow.replaceRow(row);
             if (userDefinedSeqComparator != null) {
                 InternalRow previous = tableState.get(primaryKeyRow);

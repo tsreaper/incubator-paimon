@@ -22,6 +22,7 @@ import org.apache.paimon.flink.FlinkConnectorOptions.LookupCacheMode;
 import org.apache.paimon.utils.BlockingIterator;
 
 import org.apache.flink.types.Row;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -71,6 +72,11 @@ public class LookupJoinITCase extends CatalogITCaseBase {
             default:
                 throw new UnsupportedOperationException();
         }
+    }
+
+    @AfterEach
+    public void after() {
+        Magic.M.set(false);
     }
 
     @ParameterizedTest
@@ -591,6 +597,8 @@ public class LookupJoinITCase extends CatalogITCaseBase {
     @ParameterizedTest
     @EnumSource(LookupCacheMode.class)
     public void testAsyncRetryLookup(LookupCacheMode cacheMode) throws Exception {
+        Magic.M.set(true);
+
         initTable(cacheMode);
         sql("INSERT INTO DIM VALUES (1, 11, 111, 1111), (2, 22, 222, 2222)");
 

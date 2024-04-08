@@ -19,6 +19,7 @@
 package org.apache.paimon.flink.sink;
 
 import org.apache.paimon.data.InternalRow;
+import org.apache.paimon.flink.Magic;
 import org.apache.paimon.table.FileStoreTable;
 
 import org.apache.flink.api.java.tuple.Tuple2;
@@ -47,6 +48,19 @@ public class DynamicBucketRowWriteOperator
     @Override
     public void processElement(StreamRecord<Tuple2<InternalRow, Integer>> element)
             throws Exception {
+        if (Magic.M.get()) {
+            if (element.getValue().f0.getFieldCount() == 1) {
+                System.out.println(
+                        System.currentTimeMillis() + " ~~~~~~~ " + element.getValue().f0.getInt(0));
+            } else if (element.getValue().f0.getFieldCount() == 4) {
+                System.out.println(
+                        System.currentTimeMillis()
+                                + " ~~~~~~~ "
+                                + element.getValue().f0.getInt(0)
+                                + " !!!!!!!!!! "
+                                + element.getValue().f0.getInt(1));
+            }
+        }
         write.write(element.getValue().f0, element.getValue().f1);
     }
 }

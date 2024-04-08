@@ -19,6 +19,7 @@
 package org.apache.paimon.flink.sink;
 
 import org.apache.paimon.data.InternalRow;
+import org.apache.paimon.flink.Magic;
 import org.apache.paimon.flink.log.LogWriteCallback;
 import org.apache.paimon.table.FileStoreTable;
 import org.apache.paimon.table.sink.SinkRecord;
@@ -125,6 +126,21 @@ public class RowDataStoreWriteOperator extends TableWriteOperator<InternalRow> {
 
         SinkRecord record;
         try {
+            if (Magic.M.get()) {
+                if (element.getValue().getFieldCount() == 1) {
+                    System.out.println(
+                            System.currentTimeMillis()
+                                    + " ~~~~~~~ "
+                                    + element.getValue().getInt(0));
+                } else if (element.getValue().getFieldCount() == 4) {
+                    System.out.println(
+                            System.currentTimeMillis()
+                                    + " ~~~~~~~ "
+                                    + element.getValue().getInt(0)
+                                    + " !!!!!!!!!! "
+                                    + element.getValue().getInt(1));
+                }
+            }
             record = write.write(element.getValue());
         } catch (Exception e) {
             throw new IOException(e);
