@@ -125,6 +125,9 @@ public class LookupStreamingReader {
                 split -> readBuilder.newRead().createReader(split);
 
         if (Magic.M.get()) {
+            System.out.println(System.currentTimeMillis() + " calling refresh~ " + useParallelism);
+            new RuntimeException().printStackTrace();
+
             String str =
                     splits.stream()
                             .map(

@@ -128,6 +128,12 @@ public abstract class FullCacheLookupTable implements LookupTable {
                     bulkLoadSorter.write(GenericRow.of(toKeyBytes(row), toValueBytes(row)));
                 }
             }
+        } catch (Exception e) {
+            if (Magic.M.get()) {
+                System.out.println(System.currentTimeMillis() + " oh no exception when start!");
+                e.printStackTrace();
+            }
+            throw e;
         }
 
         MutableObjectIterator<BinaryRow> keyIterator = bulkLoadSorter.sortedIterator();
@@ -160,6 +166,12 @@ public abstract class FullCacheLookupTable implements LookupTable {
                     return;
                 }
                 refresh(batch);
+            } catch (Exception e) {
+                if (Magic.M.get()) {
+                    System.out.println(System.currentTimeMillis() + " oh no exception!");
+                    e.printStackTrace();
+                }
+                throw e;
             }
         }
     }
