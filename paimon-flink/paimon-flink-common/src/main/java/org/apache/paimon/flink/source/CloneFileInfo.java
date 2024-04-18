@@ -16,26 +16,33 @@
  * limitations under the License.
  */
 
-package org.apache.paimon.table;
+package org.apache.paimon.flink.source;
 
-import org.apache.paimon.fs.FileIOFinder;
-import org.apache.paimon.schema.SchemaManager;
-import org.apache.paimon.schema.TableSchema;
+import org.apache.paimon.fs.Path;
 
-import java.util.Map;
+/** The information of copy file. */
+public class CloneFileInfo {
 
-/** Tests of {@link AppendOnlyFileStoreTable} for schema evolution. */
-public class AppendOnlyFileDataTableTest extends FileDataFilterTestBase {
+    private final Path filePathExcludeTableRoot;
+    private final long fileSize;
+    private final boolean isSnapshotOrTagFile;
 
-    @Override
-    protected FileStoreTable createFileStoreTable(Map<Long, TableSchema> tableSchemas) {
-        SchemaManager schemaManager = new TestingSchemaManager(tablePath, tableSchemas);
-        return new AppendOnlyFileStoreTable(
-                FileIOFinder.find(tablePath), tablePath, schemaManager.latest().get()) {
-            @Override
-            public SchemaManager schemaManager() {
-                return schemaManager;
-            }
-        };
+    public CloneFileInfo(
+            Path filePathExcludeTableRoot, long fileSize, boolean isSnapshotOrTagFile) {
+        this.filePathExcludeTableRoot = filePathExcludeTableRoot;
+        this.fileSize = fileSize;
+        this.isSnapshotOrTagFile = isSnapshotOrTagFile;
+    }
+
+    public Path getFilePathExcludeTableRoot() {
+        return filePathExcludeTableRoot;
+    }
+
+    public long getFileSize() {
+        return fileSize;
+    }
+
+    public boolean isSnapshotOrTagFile() {
+        return isSnapshotOrTagFile;
     }
 }

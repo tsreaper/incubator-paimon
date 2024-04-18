@@ -258,7 +258,8 @@ abstract class AbstractFileStoreTable implements FileStoreTable {
         }
     }
 
-    protected SchemaManager schemaManager() {
+    @Override
+    public SchemaManager schemaManager() {
         return new SchemaManager(fileIO(), path);
     }
 

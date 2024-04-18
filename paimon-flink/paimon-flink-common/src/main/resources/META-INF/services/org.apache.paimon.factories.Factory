@@ -15,6 +15,7 @@
 
 ### action factories
 org.apache.paimon.flink.action.CompactActionFactory
+org.apache.paimon.flink.action.CloneActionFactory
 org.apache.paimon.flink.action.CompactDatabaseActionFactory
 org.apache.paimon.flink.action.DropPartitionActionFactory
 org.apache.paimon.flink.action.DeleteActionFactory
@@ -31,6 +32,7 @@ org.apache.paimon.flink.action.QueryServiceActionFactory
 ### procedure factories
 org.apache.paimon.flink.procedure.CompactDatabaseProcedure
 org.apache.paimon.flink.procedure.CompactProcedure
+org.apache.paimon.flink.procedure.CloneProcedure
 org.apache.paimon.flink.procedure.CreateTagProcedure
 org.apache.paimon.flink.procedure.DeleteTagProcedure
 org.apache.paimon.flink.procedure.CreateBranchProcedure
