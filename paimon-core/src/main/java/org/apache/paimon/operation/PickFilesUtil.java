@@ -66,7 +66,18 @@ public class PickFilesUtil {
     /** Get table all files in the specified directories. */
     public static Map<String, Pair<Path, Long>> getTableAllFiles(
             Path tableRoot, int partitionKeysNum, FileIO fileIO) {
+        List<Path> snapshotDirs = new ArrayList<>();
+        snapshotDirs.add(new Path(tableRoot, "snapshot"));
+        snapshotDirs.add(new Path(tableRoot, "tag"));
+        Map<String, Pair<Path, Long>> files = getFiles(fileIO, snapshotDirs);
+
         List<Path> fileDirs = listPaimonFileDirs(tableRoot, partitionKeysNum, fileIO);
+        files.putAll(getFiles(fileIO, fileDirs));
+
+        return files;
+    }
+
+    private static Map<String, Pair<Path, Long>> getFiles(FileIO fileIO, List<Path> fileDirs) {
         try {
             return FileUtils.COMMON_IO_FORK_JOIN_POOL
                     .submit(
@@ -98,9 +109,9 @@ public class PickFilesUtil {
             Path tableRoot, int partitionKeysNum, FileIO fileIO) {
         List<Path> paimonFileDirs = new ArrayList<>();
 
-        paimonFileDirs.add(new Path(tableRoot, "snapshot"));
+        // paimonFileDirs.add(new Path(tableRoot, "snapshot"));
         paimonFileDirs.add(new Path(tableRoot, "changelog"));
-        paimonFileDirs.add(new Path(tableRoot, "tag"));
+        // paimonFileDirs.add(new Path(tableRoot, "tag"));
         paimonFileDirs.add(new Path(tableRoot, "schema"));
         paimonFileDirs.add(new Path(tableRoot, "manifest"));
         paimonFileDirs.add(new Path(tableRoot, "index"));

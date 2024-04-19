@@ -21,35 +21,35 @@ package org.apache.paimon.flink.sink;
 import org.apache.paimon.flink.source.CloneFileInfo;
 import org.apache.paimon.fs.FileIO;
 import org.apache.paimon.fs.Path;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.paimon.fs.PositionOutputStream;
+import org.apache.paimon.fs.SeekableInputStream;
 
 import java.io.IOException;
 
 /** Utility class for copy file. */
 public class CopyFileUtils {
 
-    private static final Logger LOG = LoggerFactory.getLogger(CopyFileUtils.class);
-
     public static void copyFile(
             CloneFileInfo cloneFileInfo,
             FileIO sourceTableFileIO,
             FileIO targetTableFileIO,
             Path sourceTableRootPath,
-            Path targetTableRootPath,
-            boolean copyInDifferentCluster)
+            Path targetTableRootPath)
             throws IOException {
         Path filePathExcludeTableRoot = cloneFileInfo.getFilePathExcludeTableRoot();
         Path sourcePath = new Path(sourceTableRootPath.toString() + filePathExcludeTableRoot);
         Path targetPath = new Path(targetTableRootPath.toString() + filePathExcludeTableRoot);
 
-        LOG.info("Begin copy file from {} to {}.", sourcePath, targetPath);
-        if (copyInDifferentCluster) {
-            targetTableFileIO.writeFileUtf8(targetPath, sourceTableFileIO.readFileUtf8(sourcePath));
-        } else {
-            sourceTableFileIO.copyFileUtf8(sourcePath, targetPath);
+        try (SeekableInputStream ins = sourceTableFileIO.newInputStream(sourcePath);
+                PositionOutputStream outs = targetTableFileIO.newOutputStream(targetPath, true)) {
+            byte[] buffer = new byte[1024 * 1024 * 64];
+            while (true) {
+                int len = ins.read(buffer);
+                if (len < 0) {
+                    break;
+                }
+                outs.write(buffer, 0, len);
+            }
         }
-        LOG.info("End copy file from {} to {}.", sourcePath, targetPath);
     }
 }

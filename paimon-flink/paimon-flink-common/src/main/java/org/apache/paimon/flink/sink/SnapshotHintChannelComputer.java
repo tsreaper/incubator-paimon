@@ -16,33 +16,29 @@
  * limitations under the License.
  */
 
-package org.apache.paimon.flink.source;
+package org.apache.paimon.flink.sink;
 
-import org.apache.paimon.fs.Path;
+import org.apache.paimon.flink.source.CloneFileInfo;
+import org.apache.paimon.table.sink.ChannelComputer;
 
-/** The information of copy file. */
-public class CloneFileInfo {
+/** Computer. */
+public class SnapshotHintChannelComputer implements ChannelComputer<CloneFileInfo> {
 
-    private final Path filePathExcludeTableRoot;
-    private final String sourceIdentifier;
-    private final String targetIdentifier;
+    private static final long serialVersionUID = 1L;
 
-    public CloneFileInfo(
-            Path filePathExcludeTableRoot, String sourceIdentifier, String targetIdentifier) {
-        this.filePathExcludeTableRoot = filePathExcludeTableRoot;
-        this.sourceIdentifier = sourceIdentifier;
-        this.targetIdentifier = targetIdentifier;
+    private int numChannels;
+
+    @Override
+    public void setup(int numChannels) {
+        this.numChannels = numChannels;
     }
 
-    public Path getFilePathExcludeTableRoot() {
-        return filePathExcludeTableRoot;
-    }
-
-    public String sourceIdentifier() {
-        return sourceIdentifier;
-    }
-
-    public String targetIdentifier() {
-        return targetIdentifier;
+    @Override
+    public int channel(CloneFileInfo record) {
+        int hsh = 0;
+        for (int i = 0; i < record.targetIdentifier().length(); i++) {
+            hsh = (hsh * 131 + record.targetIdentifier().charAt(i)) % numChannels;
+        }
+        return hsh;
     }
 }

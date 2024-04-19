@@ -18,42 +18,29 @@
 
 package org.apache.paimon.flink.action;
 
-import org.apache.paimon.catalog.Catalog;
-import org.apache.paimon.catalog.Identifier;
-import org.apache.paimon.flink.FlinkCatalogFactory;
-import org.apache.paimon.flink.sink.CheckCloneResultAndCopySnapshotOperator;
 import org.apache.paimon.flink.sink.CopyFileOperator;
+import org.apache.paimon.flink.sink.FlinkStreamPartitioner;
+import org.apache.paimon.flink.sink.SnapshotHintChannelComputer;
+import org.apache.paimon.flink.sink.SnapshotHintOperator;
 import org.apache.paimon.flink.source.CloneFileInfo;
 import org.apache.paimon.flink.source.CloneFileInfoTypeInfo;
-import org.apache.paimon.flink.source.PickFilesForCloneBuilder;
-import org.apache.paimon.fs.FileIO;
-import org.apache.paimon.fs.Path;
+import org.apache.paimon.flink.source.CloneSourceBuilder;
+import org.apache.paimon.flink.source.PickFilesForCloneOperator;
 import org.apache.paimon.options.CatalogOptions;
-import org.apache.paimon.options.Options;
-import org.apache.paimon.schema.Schema;
-import org.apache.paimon.schema.TableSchema;
-import org.apache.paimon.table.FileStoreTable;
-import org.apache.paimon.table.Table;
+import org.apache.paimon.utils.Preconditions;
 
 import org.apache.flink.api.common.RuntimeExecutionMode;
+import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.configuration.ExecutionOptions;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.sink.DiscardingSink;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.net.URI;
 import java.util.Map;
 
-import static org.apache.paimon.utils.Preconditions.checkNotNull;
-
 /** Snapshot/Tag/Table clone action for Flink. */
-public class CloneAction extends TableActionBase {
-
-    private static final Logger LOG = LoggerFactory.getLogger(CloneAction.class);
+public class CloneAction extends ActionBase {
 
     private final CloneType cloneType;
     private final int parallelism;
@@ -61,140 +48,45 @@ public class CloneAction extends TableActionBase {
     private final String tagName;
     private final long timestamp;
 
-    private final FileStoreTable sourceFileStoreTable;
-    private FileStoreTable targetFileStoreTable;
+    private final Map<String, String> sourceCatalogConfig;
+    private final String database;
+    private final String tableName;
 
-    private final Path sourceTableRootPath;
-    private final Path targetTableRootPath;
-
-    private final boolean copyInDifferentCluster;
+    private final Map<String, String> targetCatalogConfig;
+    private final String targetDatabase;
+    private final String targetTableName;
 
     public CloneAction(
-            String sourceWarehouse,
-            String sourceDatabase,
-            String sourceTableName,
             Map<String, String> sourceCatalogConfig,
+            String warehouse,
+            String database,
+            String tableName,
+            Map<String, String> targetCatalogConfig,
             String targetWarehouse,
             String targetDatabase,
             String targetTableName,
-            Map<String, String> targetCatalogConfig,
             int parallelism,
             CloneType cloneType,
             long snapshotId,
             String tagName,
             long timestamp) {
-        super(sourceWarehouse, sourceDatabase, sourceTableName, sourceCatalogConfig);
+        super(warehouse, sourceCatalogConfig);
+
         this.cloneType = cloneType;
         this.parallelism = parallelism;
         this.snapshotId = snapshotId;
         this.tagName = tagName;
         this.timestamp = timestamp;
-        this.sourceFileStoreTable = checkTableAndCast(table);
 
-        initTargetTableAndCleanDir(
-                targetWarehouse,
-                targetDatabase,
-                targetTableName,
-                targetCatalogConfig,
-                sourceFileStoreTable.schema());
+        this.sourceCatalogConfig = sourceCatalogConfig;
+        sourceCatalogConfig.put(CatalogOptions.WAREHOUSE.key(), warehouse);
+        this.database = database;
+        this.tableName = tableName;
 
-        this.sourceTableRootPath = sourceFileStoreTable.location();
-        this.targetTableRootPath = targetFileStoreTable.location();
-        this.copyInDifferentCluster = judgeCopyInDifferentCluster();
-        LOG.info("copyInDifferentCluster is {}. ", copyInDifferentCluster);
-    }
-
-    private void initTargetTableAndCleanDir(
-            String targetWarehouse,
-            String targetDatabase,
-            String targetTableName,
-            Map<String, String> targetCatalogConfig,
-            TableSchema sourceSchema) {
-        Options targetTableCatalogOptions = Options.fromMap(targetCatalogConfig);
-        targetTableCatalogOptions.set(CatalogOptions.WAREHOUSE, targetWarehouse);
-        Catalog targetCatalog = FlinkCatalogFactory.createPaimonCatalog(targetTableCatalogOptions);
-        try {
-            if (!targetCatalog.databaseExists(targetDatabase)) {
-                targetCatalog.createDatabase(targetDatabase, true);
-            }
-            Identifier targetIdentifier = new Identifier(targetDatabase, targetTableName);
-            Table targetTable;
-            if (targetCatalog.tableExists(targetIdentifier)) {
-                targetTable = targetCatalog.getTable(targetIdentifier);
-                this.targetFileStoreTable = checkTableAndCast(targetTable);
-                targetFileStoreTable
-                        .fileIO()
-                        .deleteDirectoryQuietly(targetFileStoreTable.location());
-            } else {
-                targetCatalog.createTable(
-                        targetIdentifier, Schema.fromTableSchema(sourceSchema), false);
-                targetTable = targetCatalog.getTable(targetIdentifier);
-                this.targetFileStoreTable = checkTableAndCast(targetTable);
-            }
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    private boolean judgeCopyInDifferentCluster() {
-        FileIO sourceTableFileIO = sourceFileStoreTable.fileIO();
-        FileIO targetTableFileIO = targetFileStoreTable.fileIO();
-
-        URI sourceTableRootUri;
-        URI targetTableRootUri;
-        try {
-            sourceTableRootUri =
-                    sourceTableFileIO.getFileStatus(sourceTableRootPath).getPath().toUri();
-            targetTableRootUri =
-                    targetTableFileIO.getFileStatus(targetTableRootPath).getPath().toUri();
-        } catch (IOException e) {
-            throw new RuntimeException("get file status error.");
-        }
-
-        String sourceTableUriSchema = sourceTableRootUri.getScheme();
-        checkNotNull(sourceTableUriSchema, "Schema of sourceTableRootUri should not be null.");
-
-        String targetTableUriSchema = targetTableRootUri.getScheme();
-        checkNotNull(targetTableUriSchema, "Schema of targetTableRootUri should not be null.");
-
-        if (!sourceTableUriSchema.equals(targetTableUriSchema)) {
-            return true;
-        }
-
-        String sourceTableUriAuthority = sourceTableRootUri.getAuthority();
-        String targetTableUriAuthority = targetTableRootUri.getAuthority();
-        if (sourceTableUriAuthority == null && targetTableUriAuthority == null) {
-            return false;
-        }
-        if (sourceTableUriAuthority == null || targetTableUriAuthority == null) {
-            return true;
-        }
-
-        LOG.info(
-                "sourceTableRootPath is {}, targetTableRootPath is {}, "
-                        + "sourceTableRootUri is {}, targetTableRootUri is {},"
-                        + "sourceTableUriSchema is {}, targetTableUriSchema is {},"
-                        + " sourceTableUriAuthority is {}, targetTableUriAuthority is {}.",
-                sourceTableRootPath,
-                targetTableRootPath,
-                sourceTableRootUri,
-                targetTableRootUri,
-                sourceTableUriSchema,
-                targetTableUriSchema,
-                sourceTableUriAuthority,
-                targetTableUriAuthority);
-
-        return !sourceTableUriAuthority.equals(targetTableUriAuthority);
-    }
-
-    private FileStoreTable checkTableAndCast(Table table) {
-        if (!(table instanceof FileStoreTable)) {
-            throw new UnsupportedOperationException(
-                    String.format(
-                            "table type error. The table type is '%s'.",
-                            table.getClass().getName()));
-        }
-        return (FileStoreTable) table;
+        this.targetCatalogConfig = targetCatalogConfig;
+        targetCatalogConfig.put(CatalogOptions.WAREHOUSE.key(), targetWarehouse);
+        this.targetDatabase = targetDatabase;
+        this.targetTableName = targetTableName;
     }
 
     // ------------------------------------------------------------------------
@@ -208,57 +100,56 @@ public class CloneAction extends TableActionBase {
     }
 
     private void checkFlinkParameters() {
-        // only support batch clone yet
-        if (env.getConfiguration().get(ExecutionOptions.RUNTIME_MODE)
-                != RuntimeExecutionMode.BATCH) {
-            LOG.warn(
-                    "Clone only support batch mode yet. "
-                            + "Please add -Dexecution.runtime-mode=BATCH."
-                            + " The action this time will shift to batch mode forcely.");
-            env.setRuntimeMode(RuntimeExecutionMode.BATCH);
-        }
+        Preconditions.checkArgument(
+                env.getConfiguration().get(ExecutionOptions.RUNTIME_MODE)
+                        == RuntimeExecutionMode.BATCH,
+                "Clone only supports batch mode.");
     }
 
     private void buildCloneFlinkJob(StreamExecutionEnvironment env) {
-        DataStream<CloneFileInfo> pickFilesForClone =
-                new PickFilesForCloneBuilder(
+        DataStream<Tuple2<String, String>> cloneSource =
+                new CloneSourceBuilder(
                                 env,
-                                sourceFileStoreTable,
-                                cloneType,
-                                snapshotId,
-                                tagName,
-                                timestamp)
+                                sourceCatalogConfig,
+                                database,
+                                tableName,
+                                targetDatabase,
+                                targetTableName)
                         .build();
+
+        SingleOutputStreamOperator<CloneFileInfo> pickFilesForClone =
+                cloneSource
+                        .transform(
+                                "Pick Files",
+                                new CloneFileInfoTypeInfo(),
+                                new PickFilesForCloneOperator(
+                                        sourceCatalogConfig,
+                                        targetCatalogConfig,
+                                        cloneType,
+                                        snapshotId,
+                                        tagName,
+                                        timestamp))
+                        .setParallelism(parallelism);
 
         SingleOutputStreamOperator<CloneFileInfo> copyFiles =
                 pickFilesForClone
+                        .rebalance()
                         .transform(
                                 "Copy Files",
                                 new CloneFileInfoTypeInfo(),
-                                new CopyFileOperator(
-                                        sourceFileStoreTable,
-                                        targetFileStoreTable,
-                                        copyInDifferentCluster,
-                                        sourceTableRootPath,
-                                        targetTableRootPath))
+                                new CopyFileOperator(sourceCatalogConfig, targetCatalogConfig))
                         .setParallelism(parallelism);
 
-        SingleOutputStreamOperator<CloneFileInfo> checkCloneResult =
-                copyFiles
+        SingleOutputStreamOperator<CloneFileInfo> snapshotHintOperator =
+                FlinkStreamPartitioner.partition(
+                                copyFiles, new SnapshotHintChannelComputer(), parallelism)
                         .transform(
-                                "Check Copy Files Result",
+                                "Recreate Snapshot Hint",
                                 new CloneFileInfoTypeInfo(),
-                                new CheckCloneResultAndCopySnapshotOperator(
-                                        sourceFileStoreTable,
-                                        targetFileStoreTable,
-                                        copyInDifferentCluster,
-                                        sourceTableRootPath,
-                                        targetTableRootPath,
-                                        cloneType))
-                        .setParallelism(1)
-                        .setMaxParallelism(1);
+                                new SnapshotHintOperator(targetCatalogConfig, cloneType))
+                        .setParallelism(parallelism);
 
-        checkCloneResult.addSink(new DiscardingSink<>()).name("end").setParallelism(1);
+        snapshotHintOperator.addSink(new DiscardingSink<>()).name("end").setParallelism(1);
     }
 
     @Override

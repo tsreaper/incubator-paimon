@@ -18,9 +18,6 @@
 
 package org.apache.paimon.flink.action;
 
-import org.apache.flink.api.java.tuple.Tuple3;
-
-import java.util.Map;
 import java.util.Optional;
 
 import static org.apache.paimon.utils.Preconditions.checkNotNull;
@@ -48,17 +45,6 @@ public class CloneActionFactory implements ActionFactory {
 
     @Override
     public Optional<Action> create(MultipleParameterToolAdapter params) {
-        Tuple3<String, String, String> sourceTablePath = getTablePath(params);
-        Map<String, String> catalogConfig = optionalConfigMap(params, CATALOG_CONF);
-
-        String warehouse = params.get(TARGET_WAREHOUSE);
-        String database = params.get(TARGET_DATABASE);
-        String table = params.get(TARGET_TABLE);
-        String path = params.get(TARGET_PATH);
-        Tuple3<String, String, String> targetTablePath =
-                getTablePath(warehouse, database, table, path);
-        Map<String, String> targetCatalogConfig = optionalConfigMap(params, TARGET_CATALOG_CONF);
-
         String cloneTypeStr = params.get(CLONE_TYPE);
         checkNotNull(cloneTypeStr, "clone_type should not be null.");
         CloneType cloneType = CloneType.valueOf(cloneTypeStr);
@@ -103,14 +89,14 @@ public class CloneActionFactory implements ActionFactory {
 
         CloneAction cloneAction =
                 new CloneAction(
-                        sourceTablePath.f0,
-                        sourceTablePath.f1,
-                        sourceTablePath.f2,
-                        catalogConfig,
-                        targetTablePath.f0,
-                        targetTablePath.f1,
-                        targetTablePath.f2,
-                        targetCatalogConfig,
+                        optionalConfigMap(params, CATALOG_CONF),
+                        params.get(WAREHOUSE),
+                        params.get(DATABASE),
+                        params.get(TABLE),
+                        optionalConfigMap(params, TARGET_CATALOG_CONF),
+                        params.get(TARGET_WAREHOUSE),
+                        params.get(TARGET_DATABASE),
+                        params.get(TARGET_TABLE),
                         parallelism,
                         cloneType,
                         snapshotId,
