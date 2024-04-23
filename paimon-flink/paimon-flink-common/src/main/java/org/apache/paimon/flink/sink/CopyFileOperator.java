@@ -86,28 +86,12 @@ public class CopyFileOperator extends AbstractStreamOperator<CloneFileInfo>
                 targetCatalog.getDataTableLocation(
                         Identifier.fromString(cloneFileInfo.targetIdentifier()));
 
-        Exception ex =
-                new RuntimeException(
-                        "Failed to copy file "
-                                + cloneFileInfo.getFilePathExcludeTableRoot()
-                                + ", skipping.");
-        for (int tries = 0; tries < 3; tries++) {
-            try {
-                CopyFileUtils.copyFile(
-                        cloneFileInfo,
-                        sourceTableFileIO,
-                        targetTableFileIO,
-                        sourceTableRootPath,
-                        targetTableRootPath);
-                output.collect(streamRecord);
-                return;
-            } catch (Exception e) {
-                ex.addSuppressed(e);
-            }
-        }
-        LOG.info(
-                "Failed to copy file {}, skipping.",
-                cloneFileInfo.getFilePathExcludeTableRoot(),
-                ex);
+        CopyFileUtils.copyFile(
+                cloneFileInfo,
+                sourceTableFileIO,
+                targetTableFileIO,
+                sourceTableRootPath,
+                targetTableRootPath);
+        output.collect(streamRecord);
     }
 }
