@@ -29,6 +29,7 @@ import org.apache.paimon.fs.Path;
 import org.apache.paimon.index.IndexFileHandler;
 import org.apache.paimon.manifest.ManifestFile;
 import org.apache.paimon.manifest.ManifestList;
+import org.apache.paimon.operation.MyPickFilesUtil;
 import org.apache.paimon.operation.PickFilesUtil;
 import org.apache.paimon.options.Options;
 import org.apache.paimon.schema.Schema;
@@ -46,6 +47,7 @@ import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import static org.apache.paimon.utils.Preconditions.checkArgument;
@@ -92,6 +94,20 @@ public class PickFilesForCloneOperator extends AbstractStreamOperator<CloneFileI
 
     @Override
     public void processElement(StreamRecord<Tuple2<String, String>> streamRecord) throws Exception {
+        try {
+            processElementImpl(streamRecord);
+        } catch (Exception e) {
+            throw new RuntimeException(
+                    "Failed to clone from table "
+                            + streamRecord.getValue().f0
+                            + " to table "
+                            + streamRecord.getValue().f1,
+                    e);
+        }
+    }
+
+    private void processElementImpl(StreamRecord<Tuple2<String, String>> streamRecord)
+            throws Exception {
         String sourceIdentifierStr = streamRecord.getValue().f0;
         Identifier sourceIdentifier = Identifier.fromString(sourceIdentifierStr);
         String targetIdentifierStr = streamRecord.getValue().f1;
@@ -118,52 +134,58 @@ public class PickFilesForCloneOperator extends AbstractStreamOperator<CloneFileI
 
         Path sourceTableRoot = sourceTable.location();
 
-        Map<String, Pair<Path, Long>> tableAllFiles =
-                PickFilesUtil.getTableAllFiles(sourceTableRoot, partitionNum, fileIO);
+        Supplier<Map<String, Pair<Path, Long>>> getTableAllFiles =
+                () -> {
+                    Map<String, Pair<Path, Long>> tableAllFiles =
+                            PickFilesUtil.getTableAllFiles(sourceTableRoot, partitionNum, fileIO);
 
-        Map<String, Pair<Path, Long>> tableAllFilesExcludeTableRoot =
-                tableAllFiles.entrySet().stream()
-                        .collect(
-                                Collectors.toMap(
-                                        Map.Entry::getKey,
-                                        e ->
-                                                Pair.of(
-                                                        getPathExcludeTableRoot(
-                                                                e.getValue().getKey(),
-                                                                sourceTableRoot),
-                                                        e.getValue().getRight())));
+                    return tableAllFiles.entrySet().stream()
+                            .collect(
+                                    Collectors.toMap(
+                                            Map.Entry::getKey,
+                                            e ->
+                                                    Pair.of(
+                                                            getPathExcludeTableRoot(
+                                                                    e.getValue().getKey(),
+                                                                    sourceTableRoot),
+                                                            e.getValue().getRight())));
+                };
 
         List<CloneFileInfo> result;
+        List<String> usedFiles;
+        Map<String, Pair<Path, Long>> tableAllFiles;
 
         switch (cloneType) {
             case LatestSnapshot:
                 Snapshot latestSnapshot = snapshotManager.latestSnapshot();
                 checkNotNull(latestSnapshot, "Error, table has no snapshot.");
                 result =
-                        getFilePathsForSnapshotOrTag(
-                                PickFilesUtil.getUsedFilesForSnapshot(
+                        toCloneFileInfos(
+                                MyPickFilesUtil.getUsedFilesForSnapshot(
                                         latestSnapshot,
                                         snapshotManager,
+                                        sourceTable.store().pathFactory(),
                                         manifestList,
                                         manifestFile,
                                         schemaManager,
                                         indexFileHandler),
-                                tableAllFilesExcludeTableRoot,
+                                sourceTableRoot,
                                 sourceIdentifierStr,
                                 targetIdentifierStr);
                 break;
 
             case SpecificSnapshot:
                 result =
-                        getFilePathsForSnapshotOrTag(
-                                PickFilesUtil.getUsedFilesForSnapshot(
+                        toCloneFileInfos(
+                                MyPickFilesUtil.getUsedFilesForSnapshot(
                                         snapshotManager.snapshot(snapshotId),
                                         snapshotManager,
+                                        sourceTable.store().pathFactory(),
                                         manifestList,
                                         manifestFile,
                                         schemaManager,
                                         indexFileHandler),
-                                tableAllFilesExcludeTableRoot,
+                                sourceTableRoot,
                                 sourceIdentifierStr,
                                 targetIdentifierStr);
                 break;
@@ -172,39 +194,40 @@ public class PickFilesForCloneOperator extends AbstractStreamOperator<CloneFileI
                 Snapshot snapshot = snapshotManager.earlierOrEqualTimeMills(timestamp);
                 checkNotNull(snapshot, "Error, table has no snapshot.");
                 result =
-                        getFilePathsForSnapshotOrTag(
-                                PickFilesUtil.getUsedFilesForSnapshot(
+                        toCloneFileInfos(
+                                MyPickFilesUtil.getUsedFilesForSnapshot(
                                         snapshot,
                                         snapshotManager,
+                                        sourceTable.store().pathFactory(),
                                         manifestList,
                                         manifestFile,
                                         schemaManager,
                                         indexFileHandler),
-                                tableAllFilesExcludeTableRoot,
+                                sourceTableRoot,
                                 sourceIdentifierStr,
                                 targetIdentifierStr);
                 break;
 
             case Tag:
                 checkArgument(tagManager.tagExists(tagName), "Tag name '%s' not exists.", tagName);
+                usedFiles =
+                        PickFilesUtil.getUsedFilesForTag(
+                                tagManager.taggedSnapshot(tagName),
+                                tagManager,
+                                tagName,
+                                manifestList,
+                                manifestFile,
+                                schemaManager,
+                                indexFileHandler);
+                tableAllFiles = getTableAllFiles.get();
                 result =
                         getFilePathsForSnapshotOrTag(
-                                PickFilesUtil.getUsedFilesForTag(
-                                        tagManager.taggedSnapshot(tagName),
-                                        tagManager,
-                                        tagName,
-                                        manifestList,
-                                        manifestFile,
-                                        schemaManager,
-                                        indexFileHandler),
-                                tableAllFilesExcludeTableRoot,
-                                sourceIdentifierStr,
-                                targetIdentifierStr);
+                                usedFiles, tableAllFiles, sourceIdentifierStr, targetIdentifierStr);
                 break;
 
             case Table:
                 result =
-                        tableAllFilesExcludeTableRoot.entrySet().stream()
+                        getTableAllFiles.get().entrySet().stream()
                                 .map(
                                         entry ->
                                                 new CloneFileInfo(
@@ -225,6 +248,22 @@ public class PickFilesForCloneOperator extends AbstractStreamOperator<CloneFileI
             }
             output.collect(new StreamRecord<>(info));
         }
+    }
+
+    private List<CloneFileInfo> toCloneFileInfos(
+            List<Path> files,
+            Path sourceTableRoot,
+            String sourceIdentifier,
+            String targetIdentifier) {
+        List<CloneFileInfo> result = new ArrayList<>();
+        for (Path file : files) {
+            result.add(
+                    new CloneFileInfo(
+                            getPathExcludeTableRoot(file, sourceTableRoot),
+                            sourceIdentifier,
+                            targetIdentifier));
+        }
+        return result;
     }
 
     private List<CloneFileInfo> getFilePathsForSnapshotOrTag(

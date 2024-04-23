@@ -27,11 +27,8 @@ import org.apache.paimon.flink.source.CloneFileInfoTypeInfo;
 import org.apache.paimon.flink.source.CloneSourceBuilder;
 import org.apache.paimon.flink.source.PickFilesForCloneOperator;
 import org.apache.paimon.options.CatalogOptions;
-import org.apache.paimon.utils.Preconditions;
 
-import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.api.java.tuple.Tuple2;
-import org.apache.flink.configuration.ExecutionOptions;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -95,15 +92,7 @@ public class CloneAction extends ActionBase {
 
     @Override
     public void build() {
-        checkFlinkParameters();
         buildCloneFlinkJob(env);
-    }
-
-    private void checkFlinkParameters() {
-        Preconditions.checkArgument(
-                env.getConfiguration().get(ExecutionOptions.RUNTIME_MODE)
-                        == RuntimeExecutionMode.BATCH,
-                "Clone only supports batch mode.");
     }
 
     private void buildCloneFlinkJob(StreamExecutionEnvironment env) {
@@ -129,7 +118,7 @@ public class CloneAction extends ActionBase {
                                         snapshotId,
                                         tagName,
                                         timestamp))
-                        .setParallelism(parallelism);
+                        .setParallelism(1);
 
         SingleOutputStreamOperator<CloneFileInfo> copyFiles =
                 pickFilesForClone

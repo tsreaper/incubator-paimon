@@ -29,6 +29,7 @@ import org.apache.paimon.utils.Preconditions;
 import org.apache.paimon.utils.SnapshotManager;
 
 import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
+import org.apache.flink.streaming.api.operators.BoundedOneInput;
 import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 
@@ -39,13 +40,13 @@ import java.util.Set;
 
 /** Operator. */
 public class SnapshotHintOperator extends AbstractStreamOperator<CloneFileInfo>
-        implements OneInputStreamOperator<CloneFileInfo, CloneFileInfo> {
+        implements OneInputStreamOperator<CloneFileInfo, CloneFileInfo>, BoundedOneInput {
 
     private final Map<String, String> targetCatalogConfig;
     private final CloneType cloneType;
 
     private Catalog targetCatalog;
-    private Set<String> processedIdentifiers;
+    private Set<String> identifiers;
 
     public SnapshotHintOperator(Map<String, String> targetCatalogConfig, CloneType cloneType) {
         this.targetCatalogConfig = targetCatalogConfig;
@@ -57,20 +58,22 @@ public class SnapshotHintOperator extends AbstractStreamOperator<CloneFileInfo>
         super.open();
         targetCatalog =
                 FlinkCatalogFactory.createPaimonCatalog(Options.fromMap(targetCatalogConfig));
-        processedIdentifiers = new HashSet<>();
+        identifiers = new HashSet<>();
     }
 
     @Override
     public void processElement(StreamRecord<CloneFileInfo> streamRecord) throws Exception {
         String identifier = streamRecord.getValue().targetIdentifier();
-        if (processedIdentifiers.contains(identifier)) {
-            return;
-        }
-        processedIdentifiers.add(identifier);
+        identifiers.add(identifier);
+    }
 
-        FileStoreTable targetTable =
-                (FileStoreTable) targetCatalog.getTable(Identifier.fromString(identifier));
-        commitSnapshotHintInTargetTable(targetTable.snapshotManager());
+    @Override
+    public void endInput() throws Exception {
+        for (String identifier : identifiers) {
+            FileStoreTable targetTable =
+                    (FileStoreTable) targetCatalog.getTable(Identifier.fromString(identifier));
+            commitSnapshotHintInTargetTable(targetTable.snapshotManager());
+        }
     }
 
     private void commitSnapshotHintInTargetTable(SnapshotManager targetTableSnapshotManager)
