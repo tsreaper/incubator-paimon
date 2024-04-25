@@ -21,10 +21,7 @@ package org.apache.paimon.operation;
 import org.apache.paimon.Snapshot;
 import org.apache.paimon.fs.Path;
 import org.apache.paimon.index.IndexFileHandler;
-import org.apache.paimon.io.DataFilePathFactory;
 import org.apache.paimon.manifest.IndexManifestEntry;
-import org.apache.paimon.manifest.ManifestEntry;
-import org.apache.paimon.manifest.ManifestFile;
 import org.apache.paimon.manifest.ManifestFileMeta;
 import org.apache.paimon.manifest.ManifestList;
 import org.apache.paimon.schema.SchemaManager;
@@ -51,29 +48,28 @@ public class MyPickFilesUtil {
             Snapshot snapshot,
             SnapshotManager snapshotManager,
             FileStorePathFactory pathFactory,
+            FileStoreScan scan,
             ManifestList manifestList,
-            ManifestFile manifestFile,
             SchemaManager schemaManager,
             IndexFileHandler indexFileHandler) {
         List<Path> files = new ArrayList<>();
-        files.add(snapshotManager.snapshotPath(snapshot.id()));
-        files.addAll(
-                getUsedFilesInternal(
-                        snapshot,
-                        pathFactory,
-                        manifestList,
-                        manifestFile,
-                        schemaManager,
-                        indexFileHandler));
+        if (snapshot != null) {
+            files.add(snapshotManager.snapshotPath(snapshot.id()));
+            files.addAll(
+                    getUsedFilesInternal(
+                            snapshot, pathFactory, scan, manifestList, indexFileHandler));
+        }
+        for (long id : schemaManager.listAllIds()) {
+            files.add(schemaManager.toSchemaPath(id));
+        }
         return files;
     }
 
     private static List<Path> getUsedFilesInternal(
             Snapshot snapshot,
             FileStorePathFactory pathFactory,
+            FileStoreScan scan,
             ManifestList manifestList,
-            ManifestFile manifestFile,
-            SchemaManager schemaManager,
             IndexFileHandler indexFileHandler) {
         List<Path> files = new ArrayList<>();
         addManifestList(files, snapshot, pathFactory);
@@ -97,10 +93,15 @@ public class MyPickFilesUtil {
 
             // try to read data files
             List<Path> dataFiles =
-                    retryReadingDataFiles(manifestFileName, manifestFile, pathFactory);
-            if (dataFiles == null) {
-                return Collections.emptyList();
-            }
+                    scan.withSnapshot(snapshot).readSimpleEntries().stream()
+                            .map(
+                                    f ->
+                                            pathFactory
+                                                    .createDataFilePathFactory(
+                                                            f.partition(), f.bucket())
+                                                    .toPath(f.fileName()))
+                            .collect(Collectors.toList());
+            Collections.reverse(dataFiles);
             files.addAll(dataFiles);
 
             // try to read index files
@@ -124,11 +125,6 @@ public class MyPickFilesUtil {
             // add statistic file
             if (snapshot.statistics() != null) {
                 files.add(pathFactory.statsFileFactory().toPath(snapshot.statistics()));
-            }
-
-            // add schema file
-            for (long id : schemaManager.listAllIds()) {
-                files.add(schemaManager.toSchemaPath(id));
             }
         } catch (IOException e) {
             throw new RuntimeException(e);
@@ -160,31 +156,6 @@ public class MyPickFilesUtil {
         }
 
         return result;
-    }
-
-    @Nullable
-    private static List<Path> retryReadingDataFiles(
-            List<String> manifestNames, ManifestFile manifestFile, FileStorePathFactory pathFactory)
-            throws IOException {
-        List<Path> dataFiles = new ArrayList<>();
-        for (String manifestName : manifestNames) {
-            List<ManifestEntry> manifestEntries =
-                    retryReadingFiles(() -> manifestFile.readWithIOException(manifestName));
-            if (manifestEntries == null) {
-                return null;
-            }
-
-            manifestEntries.forEach(
-                    e -> {
-                        DataFilePathFactory factory =
-                                pathFactory.createDataFilePathFactory(e.partition(), e.bucket());
-                        dataFiles.add(factory.toPath(e.file().fileName()));
-                        for (String f : e.file().extraFiles()) {
-                            dataFiles.add(factory.toPath(f));
-                        }
-                    });
-        }
-        return dataFiles;
     }
 
     @Nullable

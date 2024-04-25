@@ -126,12 +126,9 @@ public class PickFilesForCloneOperator extends AbstractStreamOperator<CloneFileI
         targetCatalog.createDatabase(targetIdentifier.getDatabaseName(), true);
         targetCatalog.createTable(
                 targetIdentifier, Schema.fromTableSchema(sourceTable.schema()), true);
-        FileStoreTable targetTable = (FileStoreTable) targetCatalog.getTable(targetIdentifier);
 
         FileIO sourceFileIO = sourceTable.fileIO();
-        FileIO targetFileIO = targetTable.fileIO();
         Path sourceTableRoot = sourceTable.location();
-        Path targetTableRoot = targetTable.location();
 
         Supplier<Map<String, Pair<Path, Long>>> getTableAllFiles =
                 () -> {
@@ -157,22 +154,17 @@ public class PickFilesForCloneOperator extends AbstractStreamOperator<CloneFileI
 
         switch (cloneType) {
             case LatestSnapshot:
-                Snapshot latestSnapshot = snapshotManager.latestSnapshot();
-                checkNotNull(latestSnapshot, "Error, table has no snapshot.");
                 result =
                         toCloneFileInfos(
                                 MyPickFilesUtil.getUsedFilesForSnapshot(
-                                        latestSnapshot,
+                                        snapshotManager.latestSnapshot(),
                                         snapshotManager,
                                         sourceTable.store().pathFactory(),
+                                        sourceTable.store().newScan(),
                                         manifestList,
-                                        manifestFile,
                                         schemaManager,
                                         indexFileHandler),
-                                sourceFileIO,
-                                targetFileIO,
                                 sourceTableRoot,
-                                targetTableRoot,
                                 sourceIdentifierStr,
                                 targetIdentifierStr);
                 break;
@@ -184,14 +176,11 @@ public class PickFilesForCloneOperator extends AbstractStreamOperator<CloneFileI
                                         snapshotManager.snapshot(snapshotId),
                                         snapshotManager,
                                         sourceTable.store().pathFactory(),
+                                        sourceTable.store().newScan(),
                                         manifestList,
-                                        manifestFile,
                                         schemaManager,
                                         indexFileHandler),
-                                sourceFileIO,
-                                targetFileIO,
                                 sourceTableRoot,
-                                targetTableRoot,
                                 sourceIdentifierStr,
                                 targetIdentifierStr);
                 break;
@@ -205,14 +194,11 @@ public class PickFilesForCloneOperator extends AbstractStreamOperator<CloneFileI
                                         snapshot,
                                         snapshotManager,
                                         sourceTable.store().pathFactory(),
+                                        sourceTable.store().newScan(),
                                         manifestList,
-                                        manifestFile,
                                         schemaManager,
                                         indexFileHandler),
-                                sourceFileIO,
-                                targetFileIO,
                                 sourceTableRoot,
-                                targetTableRoot,
                                 sourceIdentifierStr,
                                 targetIdentifierStr);
                 break;
@@ -261,23 +247,12 @@ public class PickFilesForCloneOperator extends AbstractStreamOperator<CloneFileI
 
     private List<CloneFileInfo> toCloneFileInfos(
             List<Path> files,
-            FileIO sourceFileIO,
-            FileIO targetFileIO,
             Path sourceTableRoot,
-            Path targetTableRoot,
             String sourceIdentifier,
-            String targetIdentifier)
-            throws Exception {
+            String targetIdentifier) {
         List<CloneFileInfo> result = new ArrayList<>();
         for (Path file : files) {
             Path relativePath = getPathExcludeTableRoot(file, sourceTableRoot);
-            Path sourceAbsolutePath = new Path(sourceTableRoot, relativePath);
-            Path targetAbsolutePath = new Path(targetTableRoot, relativePath);
-            if (targetFileIO.exists(targetAbsolutePath)
-                    && targetFileIO.getFileSize(targetAbsolutePath)
-                            == sourceFileIO.getFileSize(sourceAbsolutePath)) {
-                continue;
-            }
             result.add(new CloneFileInfo(relativePath, sourceIdentifier, targetIdentifier));
         }
         return result;

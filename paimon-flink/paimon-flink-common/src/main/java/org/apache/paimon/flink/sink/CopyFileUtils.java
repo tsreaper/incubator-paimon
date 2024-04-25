@@ -24,10 +24,15 @@ import org.apache.paimon.fs.Path;
 import org.apache.paimon.fs.PositionOutputStream;
 import org.apache.paimon.fs.SeekableInputStream;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 
 /** Utility class for copy file. */
 public class CopyFileUtils {
+
+    private static final Logger LOG = LoggerFactory.getLogger(CopyFileUtils.class);
 
     public static void copyFile(
             CloneFileInfo cloneFileInfo,
@@ -39,6 +44,15 @@ public class CopyFileUtils {
         Path filePathExcludeTableRoot = cloneFileInfo.getFilePathExcludeTableRoot();
         Path sourcePath = new Path(sourceTableRootPath.toString() + filePathExcludeTableRoot);
         Path targetPath = new Path(targetTableRootPath.toString() + filePathExcludeTableRoot);
+
+        if (targetTableFileIO.exists(targetPath)
+                && targetTableFileIO.getFileSize(targetPath)
+                        == sourceTableFileIO.getFileSize(sourcePath)) {
+            LOG.info(
+                    "Skipping target file {} because it already exists and has the same size.",
+                    targetPath);
+            return;
+        }
 
         try (SeekableInputStream ins = sourceTableFileIO.newInputStream(sourcePath);
                 PositionOutputStream outs = targetTableFileIO.newOutputStream(targetPath, true)) {

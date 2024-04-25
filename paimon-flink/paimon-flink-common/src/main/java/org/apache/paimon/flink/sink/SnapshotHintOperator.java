@@ -18,6 +18,7 @@
 
 package org.apache.paimon.flink.sink;
 
+import org.apache.paimon.Snapshot;
 import org.apache.paimon.catalog.Catalog;
 import org.apache.paimon.catalog.Identifier;
 import org.apache.paimon.flink.FlinkCatalogFactory;
@@ -25,7 +26,6 @@ import org.apache.paimon.flink.action.CloneType;
 import org.apache.paimon.flink.source.CloneFileInfo;
 import org.apache.paimon.options.Options;
 import org.apache.paimon.table.FileStoreTable;
-import org.apache.paimon.utils.Preconditions;
 import org.apache.paimon.utils.SnapshotManager;
 
 import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
@@ -36,6 +36,7 @@ import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import java.io.IOException;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.Set;
 
 /** Operator. */
@@ -82,13 +83,23 @@ public class SnapshotHintOperator extends AbstractStreamOperator<CloneFileInfo>
             case LatestSnapshot:
             case SpecificSnapshot:
             case FromTimestamp:
-                Preconditions.checkState(
-                        1 == targetTableSnapshotManager.snapshotCount(),
-                        "snapshot count is not equal to 1 "
-                                + "when cloneType is LATEST_SNAPSHOT / SPECIFIC_SNAPSHOT / FROM_TIMESTAMP.");
-                long snapshotId = targetTableSnapshotManager.safelyGetAllSnapshots().get(0).id();
-                targetTableSnapshotManager.commitEarliestHint(snapshotId);
-                targetTableSnapshotManager.commitLatestHint(snapshotId);
+                OptionalLong optionalSnapshotId =
+                        targetTableSnapshotManager.safelyGetAllSnapshots().stream()
+                                .mapToLong(Snapshot::id)
+                                .max();
+                if (optionalSnapshotId.isPresent()) {
+                    long snapshotId = optionalSnapshotId.getAsLong();
+                    targetTableSnapshotManager.commitEarliestHint(snapshotId);
+                    targetTableSnapshotManager.commitLatestHint(snapshotId);
+                    for (Snapshot snapshot : targetTableSnapshotManager.safelyGetAllSnapshots()) {
+                        if (snapshot.id() != snapshotId) {
+                            targetTableSnapshotManager
+                                    .fileIO()
+                                    .deleteQuietly(
+                                            targetTableSnapshotManager.snapshotPath(snapshot.id()));
+                        }
+                    }
+                }
                 break;
 
             case Table:
