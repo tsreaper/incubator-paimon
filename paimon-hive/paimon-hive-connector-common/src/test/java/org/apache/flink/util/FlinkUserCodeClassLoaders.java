@@ -164,16 +164,18 @@ public class FlinkUserCodeClassLoaders {
             super(new URL[0], parent);
             this.inner = inner;
 
-            System.out.println("Hello create SafetyNetWrapperClassLoader " + this + ", " + inner);
-            new RuntimeException().printStackTrace();
+            LOG.error(
+                    "Hello create SafetyNetWrapperClassLoader " + this + ", " + inner,
+                    new RuntimeException());
         }
 
         @Override
         public void close() {
             final FlinkUserCodeClassLoader inner = this.inner;
             if (inner != null) {
-                System.out.println("OK closing SafetyNetWrapperClassLoader " + this + ", " + inner);
-                new RuntimeException().printStackTrace();
+                LOG.error(
+                        "OK closing SafetyNetWrapperClassLoader " + this + ", " + inner,
+                        new RuntimeException());
 
                 try {
                     inner.close();
@@ -192,7 +194,8 @@ public class FlinkUserCodeClassLoaders {
                                 + "occurs in a third party library and cannot be fixed immediately, you can disable this check "
                                 + "with the configuration '"
                                 + CoreOptions.CHECK_LEAKED_CLASSLOADER.key()
-                                + "'.");
+                                + "'. "
+                                + this);
             }
             return inner;
         }
