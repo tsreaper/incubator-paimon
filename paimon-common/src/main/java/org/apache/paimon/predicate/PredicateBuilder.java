@@ -230,18 +230,39 @@ public class PredicateBuilder {
         }
         switch (literalType.getTypeRoot()) {
             case BOOLEAN:
+                if (o instanceof String) {
+                    o = Boolean.parseBoolean((String) o);
+                }
                 return o;
             case BIGINT:
+                if (o instanceof String) {
+                    return Long.parseLong((String) o);
+                }
                 return ((Number) o).longValue();
             case DOUBLE:
+                if (o instanceof String) {
+                    return Double.parseDouble((String) o);
+                }
                 return ((Number) o).doubleValue();
             case TINYINT:
+                if (o instanceof String) {
+                    return Byte.parseByte((String) o);
+                }
                 return ((Number) o).byteValue();
             case SMALLINT:
+                if (o instanceof String) {
+                    return Short.parseShort((String) o);
+                }
                 return ((Number) o).shortValue();
             case INTEGER:
+                if (o instanceof String) {
+                    return Integer.parseInt((String) o);
+                }
                 return ((Number) o).intValue();
             case FLOAT:
+                if (o instanceof String) {
+                    return Float.parseFloat((String) o);
+                }
                 return ((Number) o).floatValue();
             case VARCHAR:
                 return BinaryString.fromString(o.toString());
@@ -258,6 +279,8 @@ public class PredicateBuilder {
                     localDate = ((Date) o).toLocalDate();
                 } else if (o instanceof LocalDate) {
                     localDate = (LocalDate) o;
+                } else if (o instanceof String) {
+                    localDate = LocalDate.parse((String) o);
                 } else {
                     throw new UnsupportedOperationException(
                             "Unexpected date literal of class " + o.getClass().getName());
@@ -271,6 +294,8 @@ public class PredicateBuilder {
                     localTime = ((java.sql.Time) o).toLocalTime();
                 } else if (o instanceof java.time.LocalTime) {
                     localTime = (java.time.LocalTime) o;
+                } else if (o instanceof String) {
+                    localTime = LocalTime.parse((String) o);
                 } else {
                     throw new UnsupportedOperationException(
                             "Unexpected time literal of class " + o.getClass().getName());
@@ -281,6 +306,9 @@ public class PredicateBuilder {
                 DecimalType decimalType = (DecimalType) literalType;
                 int precision = decimalType.getPrecision();
                 int scale = decimalType.getScale();
+                if (o instanceof String) {
+                    return Decimal.fromBigDecimal(new BigDecimal((String) o), precision, scale);
+                }
                 return Decimal.fromBigDecimal((BigDecimal) o, precision, scale);
             case TIMESTAMP_WITHOUT_TIME_ZONE:
                 if (o instanceof java.sql.Timestamp) {
@@ -291,6 +319,8 @@ public class PredicateBuilder {
                     return Timestamp.fromLocalDateTime(dateTime);
                 } else if (o instanceof LocalDateTime) {
                     return Timestamp.fromLocalDateTime((LocalDateTime) o);
+                } else if (o instanceof String) {
+                    return Timestamp.fromLocalDateTime(LocalDateTime.parse((String) o));
                 } else {
                     throw new UnsupportedOperationException(
                             String.format(
@@ -303,6 +333,8 @@ public class PredicateBuilder {
                     return Timestamp.fromInstant(timestamp.toInstant());
                 } else if (o instanceof Instant) {
                     return Timestamp.fromInstant((Instant) o);
+                } else if (o instanceof String) {
+                    return Timestamp.fromInstant(Instant.parse((String) o));
                 } else {
                     throw new UnsupportedOperationException(
                             String.format(
