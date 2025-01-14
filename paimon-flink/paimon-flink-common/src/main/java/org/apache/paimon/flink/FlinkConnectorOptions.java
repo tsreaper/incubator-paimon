@@ -426,6 +426,14 @@ public class FlinkConnectorOptions {
                                     + "from the same partition into large ones, "
                                     + "which can decrease the number of small files. ");
 
+    public static final ConfigOption<Integer> CHANGELOG_PRECOMMIT_COMPACT_THREAD_NUM =
+            key("changelog.precommit-compact.thread-num")
+                    .intType()
+                    .noDefaultValue()
+                    .withDescription(
+                            "Maximum number of threads to copy bytes form small changelog files. "
+                                    + "By default is the number of processors available to the Java virtual machine.");
+
     public static final ConfigOption<String> SOURCE_OPERATOR_UID_SUFFIX =
             key("source.operator-uid.suffix")
                     .stringType()

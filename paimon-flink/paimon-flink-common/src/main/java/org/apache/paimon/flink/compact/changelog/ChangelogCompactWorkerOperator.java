@@ -18,8 +18,11 @@
 
 package org.apache.paimon.flink.compact.changelog;
 
+import org.apache.paimon.flink.FlinkConnectorOptions;
 import org.apache.paimon.flink.sink.Committable;
+import org.apache.paimon.options.Options;
 import org.apache.paimon.table.FileStoreTable;
+import org.apache.paimon.utils.ThreadPoolUtils;
 
 import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
 import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
@@ -27,6 +30,7 @@ import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.types.Either;
 
 import java.util.List;
+import java.util.concurrent.ExecutorService;
 
 /**
  * Receive and process the {@link ChangelogCompactTask}s emitted by {@link
@@ -34,20 +38,34 @@ import java.util.List;
  */
 public class ChangelogCompactWorkerOperator extends AbstractStreamOperator<Committable>
         implements OneInputStreamOperator<Either<Committable, ChangelogCompactTask>, Committable> {
+
     private final FileStoreTable table;
+    private transient ExecutorService executor;
 
     public ChangelogCompactWorkerOperator(FileStoreTable table) {
         this.table = table;
     }
 
+    @Override
+    public void open() throws Exception {
+        Options options = new Options(table.options());
+        int numThreads =
+                options.getOptional(FlinkConnectorOptions.CHANGELOG_PRECOMMIT_COMPACT_THREAD_NUM)
+                        .orElse(Runtime.getRuntime().availableProcessors());
+        LOG.info("Creating thread poll of size {} for changelog compaction.", numThreads);
+        executor =
+                ThreadPoolUtils.createCachedThreadPool(
+                        numThreads, "changelog-compact-async-read-bytes");
+    }
+
+    @Override
     public void processElement(StreamRecord<Either<Committable, ChangelogCompactTask>> record)
             throws Exception {
-
         if (record.getValue().isLeft()) {
             output.collect(new StreamRecord<>(record.getValue().left()));
         } else {
             ChangelogCompactTask task = record.getValue().right();
-            List<Committable> committables = task.doCompact(table);
+            List<Committable> committables = task.doCompact(table, executor);
             committables.forEach(committable -> output.collect(new StreamRecord<>(committable)));
         }
     }

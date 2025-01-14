@@ -23,7 +23,6 @@ import org.apache.paimon.flink.compact.changelog.format.CompactedChangelogReadOn
 import org.apache.paimon.flink.sink.Committable;
 import org.apache.paimon.fs.Path;
 import org.apache.paimon.fs.PositionOutputStream;
-import org.apache.paimon.fs.SeekableInputStream;
 import org.apache.paimon.io.CompactIncrement;
 import org.apache.paimon.io.DataFileMeta;
 import org.apache.paimon.io.DataFilePathFactory;
@@ -33,22 +32,28 @@ import org.apache.paimon.table.sink.CommitMessageImpl;
 import org.apache.paimon.utils.FileStorePathFactory;
 import org.apache.paimon.utils.IOUtils;
 import org.apache.paimon.utils.Preconditions;
+import org.apache.paimon.utils.ThreadPoolUtils;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.function.BiConsumer;
 
 /**
  * {@link ChangelogCompactTask} to compact several changelog files from the same partition into one
  * file, in order to reduce the number of small files.
  */
 public class ChangelogCompactTask implements Serializable {
+
     private final long checkpointId;
     private final BinaryRow partition;
     private final Map<Integer, List<DataFileMeta>> newFileChangelogFiles;
@@ -63,6 +68,11 @@ public class ChangelogCompactTask implements Serializable {
         this.partition = partition;
         this.newFileChangelogFiles = newFileChangelogFiles;
         this.compactChangelogFiles = compactChangelogFiles;
+        Preconditions.checkArgument(
+                newFileChangelogFiles.isEmpty() || compactChangelogFiles.isEmpty(),
+                "Both newFileChangelogFiles and compactChangelogFiles are not empty. "
+                        + "There is no such table where changelog is produced both from new files and from compaction. "
+                        + "This is unexpected.");
     }
 
     public long checkpointId() {
@@ -81,69 +91,71 @@ public class ChangelogCompactTask implements Serializable {
         return compactChangelogFiles;
     }
 
-    public List<Committable> doCompact(FileStoreTable table) throws Exception {
+    public List<Committable> doCompact(FileStoreTable table, ExecutorService executor)
+            throws Exception {
         FileStorePathFactory pathFactory = table.store().pathFactory();
+        List<ReadTask> tasks = new ArrayList<>();
+        BiConsumer<Map<Integer, List<DataFileMeta>>, Boolean> addTasks =
+                (files, isCompactResult) -> {
+                    for (Map.Entry<Integer, List<DataFileMeta>> entry : files.entrySet()) {
+                        int bucket = entry.getKey();
+                        DataFilePathFactory dataFilePathFactory =
+                                pathFactory.createDataFilePathFactory(partition, bucket);
+                        for (DataFileMeta meta : entry.getValue()) {
+                            tasks.add(
+                                    new ReadTask(
+                                            table,
+                                            dataFilePathFactory.toPath(meta),
+                                            bucket,
+                                            isCompactResult,
+                                            meta));
+                        }
+                    }
+                };
+        addTasks.accept(newFileChangelogFiles, false);
+        addTasks.accept(compactChangelogFiles, true);
+
+        Iterator<ReadTask> it =
+                ThreadPoolUtils.randomlyExecuteSequentialReturn(
+                        executor,
+                        t -> {
+                            // Total lengths of all bytes will not exceed `targetFileSize * 2`,
+                            // because each changelog file in this task does not exceed
+                            // `targetFileSize`, and the task is created instantly when the total
+                            // size exceed `targetFileSize.
+                            // So it's safe to store all the bytes in memory.
+                            t.readFully();
+                            return Collections.singletonList(t);
+                        },
+                        tasks);
+
         OutputStream outputStream = new OutputStream();
         List<Result> results = new ArrayList<>();
-
-        // copy all changelog files to a new big file
-        for (Map.Entry<Integer, List<DataFileMeta>> entry : newFileChangelogFiles.entrySet()) {
-            int bucket = entry.getKey();
-            DataFilePathFactory dataFilePathFactory =
-                    pathFactory.createDataFilePathFactory(partition, bucket);
-            for (DataFileMeta meta : entry.getValue()) {
-                copyFile(
-                        outputStream,
-                        results,
-                        table,
-                        dataFilePathFactory.toPath(meta),
-                        bucket,
-                        false,
-                        meta);
-            }
-        }
-        for (Map.Entry<Integer, List<DataFileMeta>> entry : compactChangelogFiles.entrySet()) {
-            Integer bucket = entry.getKey();
-            DataFilePathFactory dataFilePathFactory =
-                    pathFactory.createDataFilePathFactory(partition, bucket);
-            for (DataFileMeta meta : entry.getValue()) {
-                copyFile(
-                        outputStream,
-                        results,
-                        table,
-                        dataFilePathFactory.toPath(meta),
-                        bucket,
-                        true,
-                        meta);
-            }
+        while (it.hasNext()) {
+            // copy all files into a new big file
+            write(it.next(), outputStream, results);
         }
         outputStream.out.close();
 
         return produceNewCommittables(results, table, pathFactory, outputStream.path);
     }
 
-    private void copyFile(
-            OutputStream outputStream,
-            List<Result> results,
-            FileStoreTable table,
-            Path path,
-            int bucket,
-            boolean isCompactResult,
-            DataFileMeta meta)
+    private void write(ReadTask task, OutputStream outputStream, List<Result> results)
             throws Exception {
         if (!outputStream.isInitialized) {
             Path outputPath =
-                    new Path(path.getParent(), "tmp-compacted-changelog-" + UUID.randomUUID());
-            outputStream.init(outputPath, table.fileIO().newOutputStream(outputPath, false));
+                    new Path(task.path.getParent(), "tmp-compacted-changelog-" + UUID.randomUUID());
+            outputStream.init(outputPath, task.table.fileIO().newOutputStream(outputPath, false));
         }
         long offset = outputStream.out.getPos();
-        try (SeekableInputStream in = table.fileIO().newInputStream(path)) {
-            IOUtils.copyBytes(in, outputStream.out, IOUtils.BLOCKSIZE, false);
-        }
-        table.fileIO().deleteQuietly(path);
+        outputStream.out.write(task.result);
         results.add(
                 new Result(
-                        bucket, isCompactResult, meta, offset, outputStream.out.getPos() - offset));
+                        task.bucket,
+                        task.isCompactResult,
+                        task.meta,
+                        offset,
+                        outputStream.out.getPos() - offset));
     }
 
     private List<Committable> produceNewCommittables(
@@ -245,6 +257,39 @@ public class ChangelogCompactTask implements Serializable {
                         + "newFileChangelogFiles = %s, "
                         + "compactChangelogFiles = %s}",
                 partition, newFileChangelogFiles, compactChangelogFiles);
+    }
+
+    private static class ReadTask {
+
+        private final FileStoreTable table;
+        private final Path path;
+        private final int bucket;
+        private final boolean isCompactResult;
+        private final DataFileMeta meta;
+
+        private byte[] result = null;
+
+        private ReadTask(
+                FileStoreTable table,
+                Path path,
+                int bucket,
+                boolean isCompactResult,
+                DataFileMeta meta) {
+            this.table = table;
+            this.path = path;
+            this.bucket = bucket;
+            this.isCompactResult = isCompactResult;
+            this.meta = meta;
+        }
+
+        private void readFully() {
+            try {
+                result = IOUtils.readFully(table.fileIO().newInputStream(path), true);
+                table.fileIO().deleteQuietly(path);
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
     }
 
     private static class OutputStream {
