@@ -52,7 +52,7 @@ public class ChangelogCompactWorkerOperator extends AbstractStreamOperator<Commi
         int numThreads =
                 options.getOptional(FlinkConnectorOptions.CHANGELOG_PRECOMMIT_COMPACT_THREAD_NUM)
                         .orElse(Runtime.getRuntime().availableProcessors());
-        LOG.info("Creating thread poll of size {} for changelog compaction.", numThreads);
+        LOG.info("Creating thread pool of size {} for changelog compaction.", numThreads);
         executor =
                 ThreadPoolUtils.createCachedThreadPool(
                         numThreads, "changelog-compact-async-read-bytes");

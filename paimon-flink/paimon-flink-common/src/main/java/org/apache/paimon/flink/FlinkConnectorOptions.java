@@ -431,7 +431,7 @@ public class FlinkConnectorOptions {
                     .intType()
                     .noDefaultValue()
                     .withDescription(
-                            "Maximum number of threads to copy bytes form small changelog files. "
+                            "Maximum number of threads to copy bytes from small changelog files. "
                                     + "By default is the number of processors available to the Java virtual machine.");
 
     public static final ConfigOption<String> SOURCE_OPERATOR_UID_SUFFIX =
