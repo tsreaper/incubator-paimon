@@ -40,6 +40,8 @@ public class ChangelogCompactWorkerOperator extends AbstractStreamOperator<Commi
         implements OneInputStreamOperator<Either<Committable, ChangelogCompactTask>, Committable> {
 
     private final FileStoreTable table;
+
+    private transient int numThreads;
     private transient ExecutorService executor;
 
     public ChangelogCompactWorkerOperator(FileStoreTable table) {
@@ -49,7 +51,7 @@ public class ChangelogCompactWorkerOperator extends AbstractStreamOperator<Commi
     @Override
     public void open() throws Exception {
         Options options = new Options(table.options());
-        int numThreads =
+        numThreads =
                 options.getOptional(FlinkConnectorOptions.CHANGELOG_PRECOMMIT_COMPACT_THREAD_NUM)
                         .orElse(Runtime.getRuntime().availableProcessors());
         LOG.info("Creating thread pool of size {} for changelog compaction.", numThreads);
@@ -65,7 +67,7 @@ public class ChangelogCompactWorkerOperator extends AbstractStreamOperator<Commi
             output.collect(new StreamRecord<>(record.getValue().left()));
         } else {
             ChangelogCompactTask task = record.getValue().right();
-            List<Committable> committables = task.doCompact(table, executor);
+            List<Committable> committables = task.doCompact(table, executor, numThreads);
             committables.forEach(committable -> output.collect(new StreamRecord<>(committable)));
         }
     }

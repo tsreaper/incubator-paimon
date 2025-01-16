@@ -40,12 +40,14 @@ import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Queue;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Semaphore;
 import java.util.function.BiConsumer;
 
 /**
@@ -91,8 +93,8 @@ public class ChangelogCompactTask implements Serializable {
         return compactChangelogFiles;
     }
 
-    public List<Committable> doCompact(FileStoreTable table, ExecutorService executor)
-            throws Exception {
+    public List<Committable> doCompact(
+            FileStoreTable table, ExecutorService executor, int bufferSize) throws Exception {
         FileStorePathFactory pathFactory = table.store().pathFactory();
         List<ReadTask> tasks = new ArrayList<>();
         BiConsumer<Map<Integer, List<DataFileMeta>>, Boolean> addTasks =
@@ -115,25 +117,34 @@ public class ChangelogCompactTask implements Serializable {
         addTasks.accept(newFileChangelogFiles, false);
         addTasks.accept(compactChangelogFiles, true);
 
-        Iterator<ReadTask> it =
-                ThreadPoolUtils.randomlyExecuteSequentialReturn(
-                        executor,
-                        t -> {
-                            // Total lengths of all bytes will not exceed `targetFileSize * 2`,
-                            // because each changelog file in this task does not exceed
-                            // `targetFileSize`, and the task is created instantly when the total
-                            // size exceed `targetFileSize.
-                            // So it's safe to store all the bytes in memory.
-                            t.readFully();
-                            return Collections.singletonList(t);
-                        },
-                        tasks);
+        int numTasks = tasks.size();
+        Semaphore semaphore = new Semaphore(bufferSize);
+        Queue<ReadTask> finishedTasks = new ConcurrentLinkedQueue<>();
+        ThreadPoolUtils.randomlyOnlyExecute(
+                executor,
+                t -> {
+                    // Why not create `finishedTasks` as a blocking queue and use it to limit the
+                    // number of files awaiting to be copied? Because finished tasks are added after
+                    // their contents are read, so even if `finishedTasks` is full, each thread can
+                    // still read one more file, and the limit will become `numThreads +
+                    // bufferSize`, not just `bufferSize`.
+                    try {
+                        semaphore.acquire();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException(e);
+                    }
+                    t.readFully();
+                    finishedTasks.add(t);
+                },
+                tasks);
 
         OutputStream outputStream = new OutputStream();
         List<Result> results = new ArrayList<>();
-        while (it.hasNext()) {
+        for (int i = 0; i < numTasks; i++) {
             // copy all files into a new big file
-            write(it.next(), outputStream, results);
+            write(finishedTasks.poll(), outputStream, results);
+            semaphore.release();
         }
         outputStream.out.close();
 
