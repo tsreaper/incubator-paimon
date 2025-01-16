@@ -424,7 +424,7 @@ public class FlinkConnectorOptions {
                                     + "in order to compact several changelog files (for primary key tables) "
                                     + "or newly created data files (for unaware bucket tables) "
                                     + "from the same partition into large ones, "
-                                    + "which can decrease the number of small files. ");
+                                    + "which can decrease the number of small files.");
 
     public static final ConfigOption<Integer> CHANGELOG_PRECOMMIT_COMPACT_THREAD_NUM =
             key("changelog.precommit-compact.thread-num")

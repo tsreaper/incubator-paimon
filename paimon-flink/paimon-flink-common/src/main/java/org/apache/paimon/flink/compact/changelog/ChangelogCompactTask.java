@@ -34,6 +34,9 @@ import org.apache.paimon.utils.IOUtils;
 import org.apache.paimon.utils.Preconditions;
 import org.apache.paimon.utils.ThreadPoolUtils;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.io.Serializable;
 import java.io.UncheckedIOException;
@@ -43,10 +46,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Queue;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.Semaphore;
 import java.util.function.BiConsumer;
 
@@ -55,6 +59,8 @@ import java.util.function.BiConsumer;
  * file, in order to reduce the number of small files.
  */
 public class ChangelogCompactTask implements Serializable {
+
+    private static final Logger LOG = LoggerFactory.getLogger(ChangelogCompactTask.class);
 
     private final long checkpointId;
     private final BinaryRow partition;
@@ -119,34 +125,37 @@ public class ChangelogCompactTask implements Serializable {
 
         int numTasks = tasks.size();
         Semaphore semaphore = new Semaphore(bufferSize);
-        Queue<ReadTask> finishedTasks = new ConcurrentLinkedQueue<>();
-        ThreadPoolUtils.randomlyOnlyExecute(
-                executor,
-                t -> {
-                    // Why not create `finishedTasks` as a blocking queue and use it to limit the
-                    // number of files awaiting to be copied? Because finished tasks are added after
-                    // their contents are read, so even if `finishedTasks` is full, each thread can
-                    // still read one more file, and the limit will become `numThreads +
-                    // bufferSize`, not just `bufferSize`.
-                    try {
-                        semaphore.acquire();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        throw new RuntimeException(e);
-                    }
-                    t.readFully();
-                    finishedTasks.add(t);
-                },
-                tasks);
+        BlockingQueue<ReadTask> finishedTasks = new LinkedBlockingQueue<>();
+        List<Future<?>> futures =
+                ThreadPoolUtils.submitAllTasks(
+                        executor,
+                        t -> {
+                            // Why not create `finishedTasks` as a blocking queue and use it to
+                            // limit the number of files awaiting to be copied? Because finished
+                            // tasks are added after their contents are read, so even if
+                            // `finishedTasks` is full, each thread can still read one more file,
+                            // and the limit will become `numThreads + bufferSize`, not just
+                            // `bufferSize`.
+                            try {
+                                semaphore.acquire();
+                                t.readFully();
+                                finishedTasks.put(t);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                throw new RuntimeException(e);
+                            }
+                        },
+                        tasks);
 
         OutputStream outputStream = new OutputStream();
         List<Result> results = new ArrayList<>();
         for (int i = 0; i < numTasks; i++) {
             // copy all files into a new big file
-            write(finishedTasks.poll(), outputStream, results);
+            write(finishedTasks.take(), outputStream, results);
             semaphore.release();
         }
         outputStream.out.close();
+        ThreadPoolUtils.awaitAllFutures(futures);
 
         return produceNewCommittables(results, table, pathFactory, outputStream.path);
     }
@@ -157,6 +166,10 @@ public class ChangelogCompactTask implements Serializable {
             Path outputPath =
                     new Path(task.path.getParent(), "tmp-compacted-changelog-" + UUID.randomUUID());
             outputStream.init(outputPath, task.table.fileIO().newOutputStream(outputPath, false));
+        }
+
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("Copying bytes from {} to {}", task.path, outputStream.path);
         }
         long offset = outputStream.out.getPos();
         outputStream.out.write(task.result);
@@ -187,23 +200,23 @@ public class ChangelogCompactTask implements Serializable {
                         + baseResult.bucket
                         + "-"
                         + baseResult.length;
-        table.fileIO()
-                .rename(
-                        changelogTempPath,
-                        dataFilePathFactory.toAlignedPath(
-                                realName
-                                        + "."
-                                        + CompactedChangelogReadOnlyFormat.getIdentifier(
-                                                baseResult.meta.fileFormat()),
-                                baseResult.meta));
-
-        List<Committable> newCommittables = new ArrayList<>();
+        Path realPath =
+                dataFilePathFactory.toAlignedPath(
+                        realName
+                                + "."
+                                + CompactedChangelogReadOnlyFormat.getIdentifier(
+                                        baseResult.meta.fileFormat()),
+                        baseResult.meta);
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("Rename {} to {}", changelogTempPath, realPath);
+        }
+        table.fileIO().rename(changelogTempPath, realPath);
 
         Map<Integer, List<Result>> bucketedResults = new HashMap<>();
         for (Result result : results) {
             bucketedResults.computeIfAbsent(result.bucket, b -> new ArrayList<>()).add(result);
         }
-
+        List<Committable> newCommittables = new ArrayList<>();
         for (Map.Entry<Integer, List<Result>> entry : bucketedResults.entrySet()) {
             List<DataFileMeta> newFilesChangelog = new ArrayList<>();
             List<DataFileMeta> compactChangelog = new ArrayList<>();
