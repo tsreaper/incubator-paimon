@@ -20,6 +20,7 @@ package org.apache.paimon.flink.compact.changelog;
 
 import org.apache.paimon.CoreOptions;
 import org.apache.paimon.data.BinaryRow;
+import org.apache.paimon.flink.FlinkConnectorOptions;
 import org.apache.paimon.flink.sink.Committable;
 import org.apache.paimon.io.CompactIncrement;
 import org.apache.paimon.io.DataFileMeta;
@@ -86,7 +87,12 @@ public class ChangelogCompactCoordinateOperator
         // Changelog files are not stored in an LSM tree,
         // so we can regard them as files without primary keys.
         long targetFileSize = options.targetFileSize(false);
-        long compactionFileSize = options.compactionFileSize(false);
+        long compactionFileSize =
+                Math.min(
+                        options.compactionFileSize(false),
+                        options.toConfiguration()
+                                .get(FlinkConnectorOptions.CHANGELOG_PRECOMMIT_COMPACT_BUFFER_SIZE)
+                                .getBytes());
 
         BinaryRow partition = message.partition();
         Integer bucket = message.bucket();

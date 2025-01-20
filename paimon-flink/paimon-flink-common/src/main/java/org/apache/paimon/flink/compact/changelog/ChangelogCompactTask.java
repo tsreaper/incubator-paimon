@@ -27,6 +27,7 @@ import org.apache.paimon.io.CompactIncrement;
 import org.apache.paimon.io.DataFileMeta;
 import org.apache.paimon.io.DataFilePathFactory;
 import org.apache.paimon.io.DataIncrement;
+import org.apache.paimon.options.MemorySize;
 import org.apache.paimon.table.FileStoreTable;
 import org.apache.paimon.table.sink.CommitMessageImpl;
 import org.apache.paimon.utils.FileStorePathFactory;
@@ -100,7 +101,15 @@ public class ChangelogCompactTask implements Serializable {
     }
 
     public List<Committable> doCompact(
-            FileStoreTable table, ExecutorService executor, int bufferSize) throws Exception {
+            FileStoreTable table, ExecutorService executor, MemorySize bufferSize)
+            throws Exception {
+        Preconditions.checkArgument(
+                bufferSize.getBytes() <= Integer.MAX_VALUE,
+                "Changelog pre-commit compaction buffer size ({} bytes) too large! "
+                        + "The maximum possible value is {} bytes.",
+                bufferSize.getBytes(),
+                Integer.MAX_VALUE);
+
         FileStorePathFactory pathFactory = table.store().pathFactory();
         List<ReadTask> tasks = new ArrayList<>();
         BiConsumer<Map<Integer, List<DataFileMeta>>, Boolean> addTasks =
@@ -110,34 +119,40 @@ public class ChangelogCompactTask implements Serializable {
                         DataFilePathFactory dataFilePathFactory =
                                 pathFactory.createDataFilePathFactory(partition, bucket);
                         for (DataFileMeta meta : entry.getValue()) {
-                            tasks.add(
+                            ReadTask task =
                                     new ReadTask(
                                             table,
                                             dataFilePathFactory.toPath(meta),
                                             bucket,
                                             isCompactResult,
-                                            meta));
+                                            meta);
+                            Preconditions.checkArgument(
+                                    meta.fileSize() <= bufferSize.getBytes(),
+                                    "Trying to compact changelog file with size {} bytes, "
+                                            + "while the buffer size is only {} bytes. This is unexpected.",
+                                    meta.fileSize(),
+                                    bufferSize.getBytes());
+                            tasks.add(task);
                         }
                     }
                 };
         addTasks.accept(newFileChangelogFiles, false);
         addTasks.accept(compactChangelogFiles, true);
 
-        int numTasks = tasks.size();
-        Semaphore semaphore = new Semaphore(bufferSize);
+        Semaphore semaphore = new Semaphore((int) bufferSize.getBytes());
         BlockingQueue<ReadTask> finishedTasks = new LinkedBlockingQueue<>();
         List<Future<?>> futures =
                 ThreadPoolUtils.submitAllTasks(
                         executor,
                         t -> {
                             // Why not create `finishedTasks` as a blocking queue and use it to
-                            // limit the number of files awaiting to be copied? Because finished
+                            // limit the total size of bytes awaiting to be copied? Because finished
                             // tasks are added after their contents are read, so even if
                             // `finishedTasks` is full, each thread can still read one more file,
-                            // and the limit will become `numThreads + bufferSize`, not just
+                            // and the limit will become `bytesInThreads + bufferSize`, not just
                             // `bufferSize`.
                             try {
-                                semaphore.acquire();
+                                semaphore.acquire((int) t.meta.fileSize());
                                 t.readFully();
                                 finishedTasks.put(t);
                             } catch (InterruptedException e) {
@@ -149,10 +164,11 @@ public class ChangelogCompactTask implements Serializable {
 
         OutputStream outputStream = new OutputStream();
         List<Result> results = new ArrayList<>();
-        for (int i = 0; i < numTasks; i++) {
+        for (int i = 0; i < tasks.size(); i++) {
             // copy all files into a new big file
-            write(finishedTasks.take(), outputStream, results);
-            semaphore.release();
+            ReadTask task = finishedTasks.take();
+            write(task, outputStream, results);
+            semaphore.release((int) task.meta.fileSize());
         }
         outputStream.out.close();
         ThreadPoolUtils.awaitAllFutures(futures);
